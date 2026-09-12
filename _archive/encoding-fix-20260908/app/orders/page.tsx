@@ -1,0 +1,747 @@
+﻿"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { AppShell } from "@/components/app-shell";
+import { createClient } from "@/lib/supabase/client";
+
+type Customer = {
+  id: string;
+  name: string;
+  email: string | null;
+};
+
+type Order = {
+  id: string;
+  restaurant_id: string;
+  customer_id: string;
+  order_number: string;
+  total: number;
+  status: string;
+  created_at: string;
+  customers: {
+    name: string;
+  } | null;
+};
+
+export default function OrdersPage() {
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [customers, setCustomers] = useState<Customer[]>([]);
+
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const [showForm, setShowForm] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const [editingOrder, setEditingOrder] = useState<Order | null>(null);
+
+  const [customerId, setCustomerId] = useState("");
+  const [total, setTotal] = useState("");
+  const [status, setStatus] = useState("completed");
+
+  const supabase = createClient();
+
+  async function getRestaurantId() {
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      throw new Error("You are not logged in.");
+    }
+
+    const { data: restaurant, error: restaurantError } =
+      await supabase
+        .from("restaurants")
+        .select("id")
+        .eq("owner_id", user.id)
+        .single();
+
+    if (restaurantError || !restaurant) {
+      throw new Error(
+        restaurantError?.message || "Restaurant not found."
+      );
+    }
+
+    return restaurant.id;
+  }
+
+  async function refreshCustomerStats(customerUuid: string) {
+    const restaurantId = await getRestaurantId();
+
+    const { data, error } = await supabase
+      .from("orders")
+      .select("total, created_at")
+      .eq("restaurant_id", restaurantId)
+      .eq("customer_id", customerUuid)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    const customerOrders = data || [];
+
+    const totalOrders = customerOrders.length;
+
+    const totalSpent = customerOrders.reduce(
+      (sum, order) => sum + Number(order.total || 0),
+      0
+    );
+
+    const lastOrderAt =
+      customerOrders.length > 0
+        ? customerOrders[0].created_at
+        : null;
+
+    const { error: updateError } = await supabase
+      .from("customers")
+      .update({
+        total_orders: totalOrders,
+        total_spent: totalSpent,
+        last_order_at: lastOrderAt,
+      })
+      .eq("id", customerUuid)
+      .eq("restaurant_id", restaurantId);
+
+    if (updateError) {
+      throw new Error(updateError.message);
+    }
+  }
+
+  async function loadData() {
+    try {
+      setLoading(true);
+      setError("");
+
+      const restaurantId = await getRestaurantId();
+
+      const {
+        data: customersData,
+        error: customersError,
+      } = await supabase
+        .from("customers")
+        .select("id, name, email")
+        .eq("restaurant_id", restaurantId)
+        .order("name");
+
+      if (customersError) {
+        throw new Error(customersError.message);
+      }
+
+      setCustomers(customersData || []);
+
+      const {
+        data: ordersData,
+        error: ordersError,
+      } = await supabase
+        .from("orders")
+        .select(`
+          id,
+          restaurant_id,
+          customer_id,
+          order_number,
+          total,
+          status,
+          created_at,
+          customers (
+            name
+          )
+        `)
+        .eq("restaurant_id", restaurantId)
+        .order("created_at", { ascending: false });
+
+      if (ordersError) {
+        throw new Error(ordersError.message);
+      }
+
+      const formattedOrders = (ordersData || []).map((order) => ({
+        ...order,
+        customers: Array.isArray(order.customers)
+          ? order.customers[0] ?? null
+          : order.customers,
+      }));
+
+      setOrders(formattedOrders as Order[]);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Something went wrong while loading orders."
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const stats = useMemo(() => {
+    const totalRevenue = orders.reduce(
+      (sum, order) => sum + Number(order.total || 0),
+      0
+    );
+
+    const completed = orders.filter(
+      (order) => order.status === "completed"
+    ).length;
+
+    const pending = orders.filter(
+      (order) => order.status === "pending"
+    ).length;
+
+    return {
+      totalOrders: orders.length,
+      totalRevenue,
+      completed,
+      pending,
+    };
+  }, [orders]);
+
+  function openAddForm() {
+    setEditingOrder(null);
+    setCustomerId("");
+    setTotal("");
+    setStatus("completed");
+    setShowForm(true);
+  }
+
+  function openEditForm(order: Order) {
+    setEditingOrder(order);
+    setCustomerId(order.customer_id);
+    setTotal(String(order.total));
+    setStatus(order.status);
+    setShowForm(true);
+  }
+
+  function closeForm() {
+    if (saving) return;
+
+    setShowForm(false);
+    setEditingOrder(null);
+    setCustomerId("");
+    setTotal("");
+    setStatus("completed");
+  }
+
+  async function saveOrder() {
+    if (!customerId) {
+      alert("Please select a customer.");
+      return;
+    }
+
+    if (!total || Number(total) <= 0) {
+      alert("Please enter a valid order total.");
+      return;
+    }
+
+    try {
+      setSaving(true);
+
+      const restaurantId = await getRestaurantId();
+
+      if (editingOrder) {
+        const oldCustomerId = editingOrder.customer_id;
+
+        const { error: updateError } = await supabase
+          .from("orders")
+          .update({
+            customer_id: customerId,
+            total: Number(total),
+            status,
+          })
+          .eq("id", editingOrder.id)
+          .eq("restaurant_id", restaurantId);
+
+        if (updateError) {
+          throw new Error(updateError.message);
+        }
+
+        if (oldCustomerId !== customerId) {
+          await refreshCustomerStats(oldCustomerId);
+        }
+
+        await refreshCustomerStats(customerId);
+      } else {
+        const orderNumber =
+          "ORD-" + Math.floor(100000 + Math.random() * 900000);
+
+        const { error: insertError } = await supabase
+          .from("orders")
+          .insert({
+            restaurant_id: restaurantId,
+            customer_id: customerId,
+            order_number: orderNumber,
+            total: Number(total),
+            status,
+          });
+
+        if (insertError) {
+          throw new Error(insertError.message);
+        }
+
+        await refreshCustomerStats(customerId);
+      }
+
+      closeForm();
+      await loadData();
+    } catch (err) {
+      alert(
+        err instanceof Error
+          ? err.message
+          : "Something went wrong while saving the order."
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function deleteOrder(order: Order) {
+    const confirmed = window.confirm(
+      `Delete ${order.order_number}?`
+    );
+
+    if (!confirmed) return;
+
+    try {
+      const restaurantId = await getRestaurantId();
+
+      const { error: deleteError } = await supabase
+        .from("orders")
+        .delete()
+        .eq("id", order.id)
+        .eq("restaurant_id", restaurantId);
+
+      if (deleteError) {
+        throw new Error(deleteError.message);
+      }
+
+      await refreshCustomerStats(order.customer_id);
+      await loadData();
+    } catch (err) {
+      alert(
+        err instanceof Error
+          ? err.message
+          : "Something went wrong while deleting the order."
+      );
+    }
+  }
+
+  function statusClass(value: string) {
+    if (value === "completed") {
+      return "bg-green-100 text-green-700";
+    }
+
+    if (value === "pending") {
+      return "bg-yellow-100 text-yellow-700";
+    }
+
+    if (value === "processing") {
+      return "bg-blue-100 text-blue-700";
+    }
+
+    if (value === "cancelled") {
+      return "bg-red-100 text-red-700";
+    }
+
+    return "bg-gray-100 text-gray-700";
+  }
+
+  return (
+    <AppShell title="Orders">
+      <div className="space-y-6">
+
+        {/* Header */}
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h2 className="text-2xl font-bold text-gray-900">
+              Orders
+            </h2>
+
+            <p className="mt-1 text-sm text-gray-500">
+              Track and manage your restaurant orders.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <div className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white">
+              {stats.totalOrders} Orders
+            </div>
+
+            <button
+              onClick={openAddForm}
+              className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700"
+            >
+              + Add Order
+            </button>
+          </div>
+        </div>
+
+        {/* Stats */}
+        {!loading && !error && (
+          <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
+
+            <div className="rounded-2xl border bg-white p-6 shadow-sm">
+              <p className="text-sm text-gray-500">
+                Total Revenue
+              </p>
+
+              <div className="mt-2 flex items-center justify-between">
+                <h3 className="text-3xl font-bold text-green-600">
+                  ${stats.totalRevenue.toFixed(2)}
+                </h3>
+
+                <div className="rounded-xl bg-green-100 px-4 py-3 text-xl">
+                  ðŸ’°
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border bg-white p-6 shadow-sm">
+              <p className="text-sm text-gray-500">
+                Total Orders
+              </p>
+
+              <div className="mt-2 flex items-center justify-between">
+                <h3 className="text-3xl font-bold text-blue-600">
+                  {stats.totalOrders}
+                </h3>
+
+                <div className="rounded-xl bg-blue-100 px-4 py-3 text-xl">
+                  ðŸ“¦
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border bg-white p-6 shadow-sm">
+              <p className="text-sm text-gray-500">
+                Completed
+              </p>
+
+              <div className="mt-2 flex items-center justify-between">
+                <h3 className="text-3xl font-bold text-green-600">
+                  {stats.completed}
+                </h3>
+
+                <div className="rounded-xl bg-green-100 px-4 py-3 text-xl">
+                  âœ“
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border bg-white p-6 shadow-sm">
+              <p className="text-sm text-gray-500">
+                Pending
+              </p>
+
+              <div className="mt-2 flex items-center justify-between">
+                <h3 className="text-3xl font-bold text-yellow-600">
+                  {stats.pending}
+                </h3>
+
+                <div className="rounded-xl bg-yellow-100 px-4 py-3 text-xl">
+                  â³
+                </div>
+              </div>
+            </div>
+
+          </div>
+        )}
+
+        {/* Add/Edit Form */}
+        {showForm && (
+          <div className="rounded-2xl border bg-white p-6 shadow-sm">
+
+            <div className="mb-5 flex items-center justify-between">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">
+                  {editingOrder
+                    ? "Edit Order"
+                    : "Add New Order"}
+                </h3>
+
+                <p className="mt-1 text-sm text-gray-500">
+                  {editingOrder
+                    ? `Update ${editingOrder.order_number}`
+                    : "Create a new order for your restaurant."}
+                </p>
+              </div>
+
+              <button
+                onClick={closeForm}
+                className="text-gray-500 hover:text-gray-900"
+              >
+                âœ•
+              </button>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-3">
+
+              <div>
+                <label className="mb-2 block text-sm font-medium text-gray-700">
+                  Customer
+                </label>
+
+                <select
+                  value={customerId}
+                  onChange={(e) => setCustomerId(e.target.value)}
+                  className="w-full rounded-lg border px-4 py-2 outline-none focus:border-blue-500"
+                >
+                  <option value="">
+                    Select Customer
+                  </option>
+
+                  {customers.map((customer) => (
+                    <option
+                      key={customer.id}
+                      value={customer.id}
+                    >
+                      {customer.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-medium text-gray-700">
+                  Order Total
+                </label>
+
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="500"
+                  value={total}
+                  onChange={(e) => setTotal(e.target.value)}
+                  className="w-full rounded-lg border px-4 py-2 outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-medium text-gray-700">
+                  Status
+                </label>
+
+                <select
+                  value={status}
+                  onChange={(e) => setStatus(e.target.value)}
+                  className="w-full rounded-lg border px-4 py-2 outline-none focus:border-blue-500"
+                >
+                  <option value="completed">
+                    Completed
+                  </option>
+
+                  <option value="processing">
+                    Processing
+                  </option>
+
+                  <option value="pending">
+                    Pending
+                  </option>
+
+                  <option value="cancelled">
+                    Cancelled
+                  </option>
+                </select>
+              </div>
+
+            </div>
+
+            <div className="mt-5 flex gap-3">
+
+              <button
+                onClick={saveOrder}
+                disabled={saving}
+                className="rounded-lg bg-blue-600 px-5 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                {saving
+                  ? "Saving..."
+                  : editingOrder
+                  ? "Update Order"
+                  : "Save Order"}
+              </button>
+
+              <button
+                onClick={closeForm}
+                disabled={saving}
+                className="rounded-lg border px-5 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+
+            </div>
+          </div>
+        )}
+
+        {/* Error */}
+        {error && (
+          <div className="rounded-2xl border border-red-200 bg-red-50 p-6 text-red-600">
+            <strong>Error:</strong> {error}
+          </div>
+        )}
+
+        {/* Loading */}
+        {loading && (
+          <div className="rounded-2xl border bg-white p-6 text-gray-500">
+            Loading orders...
+          </div>
+        )}
+
+        {/* Empty */}
+        {!loading && !error && orders.length === 0 && (
+          <div className="rounded-2xl border bg-white p-10 text-center">
+
+            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-blue-50 text-2xl">
+              ðŸ“¦
+            </div>
+
+            <h3 className="mt-4 text-lg font-semibold text-gray-900">
+              No orders yet
+            </h3>
+
+            <p className="mt-2 text-gray-500">
+              Create your first order to start tracking sales.
+            </p>
+
+            <button
+              onClick={openAddForm}
+              className="mt-5 rounded-lg bg-blue-600 px-5 py-2 text-sm font-medium text-white hover:bg-blue-700"
+            >
+              + Add First Order
+            </button>
+
+          </div>
+        )}
+
+        {/* Table */}
+        {!loading && !error && orders.length > 0 && (
+          <div className="overflow-hidden rounded-2xl border bg-white shadow-sm">
+
+            <div className="border-b p-6">
+              <h3 className="text-lg font-semibold text-gray-900">
+                Recent Orders
+              </h3>
+
+              <p className="mt-1 text-sm text-gray-500">
+                Your latest restaurant transactions.
+              </p>
+            </div>
+
+            <div className="overflow-x-auto">
+
+              <table className="w-full text-left">
+
+                <thead className="border-b bg-gray-50 text-sm text-gray-500">
+                  <tr>
+
+                    <th className="px-6 py-4">
+                      Order
+                    </th>
+
+                    <th className="px-6 py-4">
+                      Customer
+                    </th>
+
+                    <th className="px-6 py-4">
+                      Total
+                    </th>
+
+                    <th className="px-6 py-4">
+                      Status
+                    </th>
+
+                    <th className="px-6 py-4">
+                      Date
+                    </th>
+
+                    <th className="px-6 py-4 text-right">
+                      Actions
+                    </th>
+
+                  </tr>
+                </thead>
+
+                <tbody>
+
+                  {orders.map((order) => (
+                    <tr
+                      key={order.id}
+                      className="border-b last:border-0 hover:bg-gray-50"
+                    >
+
+                      <td className="px-6 py-4 font-medium text-gray-900">
+                        {order.order_number}
+                      </td>
+
+                      <td className="px-6 py-4">
+                        <div className="font-medium text-gray-900">
+                          {order.customers?.name ||
+                            "Unknown Customer"}
+                        </div>
+                      </td>
+
+                      <td className="px-6 py-4 font-medium text-gray-900">
+                        ${Number(order.total || 0).toFixed(2)}
+                      </td>
+
+                      <td className="px-6 py-4">
+                        <span
+                          className={`rounded-full px-3 py-1 text-xs font-medium ${statusClass(
+                            order.status
+                          )}`}
+                        >
+                          {order.status}
+                        </span>
+                      </td>
+
+                      <td className="px-6 py-4 text-gray-600">
+                        {new Date(
+                          order.created_at
+                        ).toLocaleDateString()}
+                      </td>
+
+                      <td className="px-6 py-4">
+                        <div className="flex justify-end gap-2">
+
+                          <button
+                            onClick={() =>
+                              openEditForm(order)
+                            }
+                            className="rounded-lg border px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-100"
+                          >
+                            Edit
+                          </button>
+
+                          <button
+                            onClick={() =>
+                              deleteOrder(order)
+                            }
+                            className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50"
+                          >
+                            Delete
+                          </button>
+
+                        </div>
+                      </td>
+
+                    </tr>
+                  ))}
+
+                </tbody>
+
+              </table>
+
+            </div>
+
+          </div>
+        )}
+
+      </div>
+    </AppShell>
+  );
+}
+

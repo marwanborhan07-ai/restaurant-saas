@@ -1,0 +1,284 @@
+﻿"use client";
+
+import Link from "next/link";
+import { useEffect, useState } from "react";
+import {
+  PLANS,
+  type PlanKey,
+} from "@/lib/subscription";
+import { useLanguage } from "@/components/language-context";
+import { createClient } from "@/lib/supabase/client";
+
+type Subscription = {
+  subscription_status:
+    | "trial"
+    | "active"
+    | "expired"
+    | "cancelled";
+  plan: PlanKey;
+  trial_ends_at: string | null;
+  paid_until: string | null;
+};
+
+export default function BillingPage() {
+  const { language } = useLanguage();
+
+  const [subscription, setSubscription] =
+    useState<Subscription | null>(null);
+
+  const [loading, setLoading] = useState(true);
+
+  const isArabic = language === "ar";
+
+  useEffect(() => {
+    async function load() {
+      const supabase = createClient();
+
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) {
+        setLoading(false);
+        return;
+      }
+
+      const { data } =
+        await supabase
+          .from("restaurants")
+          .select(
+            "subscription_status,plan,trial_ends_at,paid_until"
+          )
+          .eq("owner_id", user.id)
+          .single();
+
+      setSubscription(
+        (data || null) as Subscription | null
+      );
+
+      setLoading(false);
+    }
+
+    load();
+  }, []);
+
+  const planEntries = Object.entries(
+    PLANS
+  ) as [PlanKey, (typeof PLANS)[PlanKey]][];
+
+  return (
+    <main
+      dir={isArabic ? "rtl" : "ltr"}
+      className="min-h-screen bg-slate-50 p-8"
+    >
+      <div className="mx-auto max-w-7xl">
+        <Link
+          href="/dashboard"
+          className="text-sm font-medium text-blue-600 hover:underline"
+        >
+          ←{" "}
+          {isArabic
+            ? "العودة للوحة التحكم"
+            : "Back to Dashboard"}
+        </Link>
+
+        <div className="mt-8 text-center">
+          <h1 className="text-4xl font-bold text-slate-900">
+            {isArabic
+              ? "اختر الباقة المناسبة لمطعمك"
+              : "Choose the right plan for your restaurant"}
+          </h1>
+
+          <p className="mx-auto mt-3 max-w-2xl text-slate-500">
+            {isArabic
+              ? "ابدأ بتجربة مجانية لمدة 14 يومًا ثم اختر الباقة المناسبة لحجم مطعمك."
+              : "Start with a 14-day free trial, then choose the plan that fits your restaurant."}
+          </p>
+        </div>
+
+        {subscription &&
+          subscription.subscription_status ===
+            "trial" && (
+            <div className="mx-auto mt-8 max-w-3xl rounded-2xl border border-blue-200 bg-blue-50 p-5 text-center">
+              <div className="font-semibold text-blue-900">
+                {isArabic
+                  ? "أنت حاليًا في فترة التجربة المجانية"
+                  : "You are currently on the free trial"}
+              </div>
+
+              <div className="mt-1 text-sm text-blue-700">
+                {isArabic
+                  ? "يمكنك تجربة إمكانيات Growth وScale قبل الاشتراك."
+                  : "You can explore the Growth and Scale experience before subscribing."}
+              </div>
+            </div>
+          )}
+
+        <div className="mt-10 grid gap-6 lg:grid-cols-3">
+          {planEntries.map(
+            ([key, plan]) => {
+              const popular =
+                key === "growth";
+
+              return (
+                <div
+                  key={key}
+                  className={`relative rounded-3xl border bg-white p-7 shadow-sm ${
+                    popular
+                      ? "border-blue-500 ring-2 ring-blue-100"
+                      : "border-slate-200"
+                  }`}
+                >
+                  {popular && (
+                    <div className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-blue-600 px-4 py-1 text-xs font-bold text-white">
+                      {isArabic
+                        ? "الأكثر طلبًا"
+                        : "MOST POPULAR"}
+                    </div>
+                  )}
+
+                  <div className="text-sm font-semibold text-blue-600">
+                    {plan.name}
+                  </div>
+
+                  <div className="mt-3 flex items-end gap-1">
+                    <span className="text-4xl font-bold text-slate-900">
+                      {plan.price.toLocaleString(
+                        "en-EG"
+                      )}
+                    </span>
+
+                    <span className="pb-1 text-sm text-slate-500">
+                      EGP /{" "}
+                      {isArabic
+                        ? "شهر"
+                        : "month"}
+                    </span>
+                  </div>
+
+                  <div className="mt-6 space-y-3 text-sm text-slate-600">
+                    <div>
+                      ✓{" "}
+                      {plan.customerLimit.toLocaleString()}{" "}
+                      {isArabic
+                        ? "عميل"
+                        : "customers"}
+                    </div>
+
+                    <div>
+                      ✓{" "}
+                      {plan.campaignLimit}{" "}
+                      {isArabic
+                        ? "حملات / شهر"
+                        : "campaigns / month"}
+                    </div>
+
+                    <div>
+                      ✓{" "}
+                      {plan.whatsappLimit.toLocaleString()}{" "}
+                      WhatsApp
+                    </div>
+
+                    <div>
+                      ✓{" "}
+                      {plan.automationLimit}{" "}
+                      {isArabic
+                        ? "أتمتة"
+                        : "automations"}
+                    </div>
+
+                    <div>
+                      ✓{" "}
+                      {plan.userLimit}{" "}
+                      {isArabic
+                        ? "مستخدمين"
+                        : "users"}
+                    </div>
+
+                    <div>
+                      {plan.roiTracking
+                        ? "✓"
+                        : "—"}{" "}
+                      {isArabic
+                        ? "قياس ROI"
+                        : "ROI Tracking"}
+                    </div>
+
+                    <div>
+                      {plan.advancedAnalytics
+                        ? "✓"
+                        : "—"}{" "}
+                      {isArabic
+                        ? "تحليلات متقدمة"
+                        : "Advanced Analytics"}
+                    </div>
+
+                    <div>
+                      {plan.growthRecommendations
+                        ? "✓"
+                        : "—"}{" "}
+                      {isArabic
+                        ? "توصيات النمو"
+                        : "Growth Recommendations"}
+                    </div>
+
+                    <div>
+                      {plan.multiLocation
+                        ? "✓"
+                        : "—"}{" "}
+                      {isArabic
+                        ? "Multi-Location"
+                        : "Multi-Location"}
+                    </div>
+
+                    <div>
+                      {plan.apiAccess
+                        ? "✓"
+                        : "—"}{" "}
+                      API
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    className={`mt-8 w-full rounded-xl px-4 py-3 font-semibold ${
+                      popular
+                        ? "bg-blue-600 text-white hover:bg-blue-700"
+                        : "border border-slate-300 bg-white text-slate-800 hover:bg-slate-50"
+                    }`}
+                  >
+                    {isArabic
+                      ? `اشترك في ${plan.name}`
+                      : `Choose ${plan.name}`}
+                  </button>
+                </div>
+              );
+            }
+          )}
+        </div>
+
+        <div className="mt-10 rounded-2xl border border-slate-200 bg-white p-6">
+          <h2 className="text-lg font-bold text-slate-900">
+            {isArabic
+              ? "ماذا يحدث بعد الدفع؟"
+              : "What happens after payment?"}
+          </h2>
+
+          <p className="mt-2 text-sm leading-6 text-slate-500">
+            {isArabic
+              ? "سيتم تفعيل الباقة تلقائيًا بعد تأكيد الدفع، ويبدأ عداد الاشتراك الشهري من تاريخ التفعيل."
+              : "Your selected plan will be activated automatically after payment confirmation, and the monthly subscription period starts from the activation date."}
+          </p>
+        </div>
+
+        {loading && (
+          <div className="mt-6 text-center text-sm text-slate-400">
+            {isArabic
+              ? "جاري تحميل حالة الاشتراك..."
+              : "Loading subscription status..."}
+          </div>
+        )}
+      </div>
+    </main>
+  );
+}

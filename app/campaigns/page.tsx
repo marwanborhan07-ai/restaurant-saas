@@ -1,0 +1,2510 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { CampaignROI } from "@/components/campaign-roi";
+import { AppShell } from "@/components/app-shell";
+import { createClient } from "@/lib/supabase/client";
+
+type Customer = {
+  id: string;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  total_orders: number | null;
+  total_spent: number | null;
+  last_order_at: string | null;
+};
+
+
+type CampaignOrder = {
+  id: string;
+  customer_id: string | null;
+  total: number;
+  currency_code: string | null;
+  status: string;
+  created_at: string;
+};
+type AudienceCustomer = Customer & {
+  daysSinceLastOrder: number | null;
+};
+
+type SegmentKey =
+  | "vip"
+  | "returning"
+  | "new"
+  | "at_risk";
+
+type Channel =
+  | "whatsapp"
+  | "sms"
+  | "email";
+
+type CampaignStatus =
+  | "draft"
+  | "scheduled"
+  | "sent"
+  | "cancelled";
+
+type Campaign = {
+  id: string;
+  restaurant_id: string;
+  name: string;
+  segment: SegmentKey;
+  channel: Channel;
+  subject: string | null;
+  message: string;
+  status: CampaignStatus;
+  audience_count: number;
+  scheduled_at: string | null;
+  sent_at: string | null;
+  created_at: string;
+  updated_at: string;
+  template_name: string | null;
+  template_language: string | null;
+  template_parameters: unknown;
+};
+
+const templates: Record<
+  SegmentKey,
+  {
+    subject: string;
+    message: string;
+  }
+> = {
+  vip: {
+    subject: "VIP Customer Offer",
+    message:
+      "Hi {{name}}, thank you for being one of our most valuable customers. We have a special offer waiting for you. We would love to see you again soon!",
+  },
+
+  returning: {
+    subject: "We'd Love to See You Again",
+    message:
+      "Hi {{name}}, we noticed you've ordered from us before. We'd love to have you back. Enjoy a special offer on your next order!",
+  },
+
+  new: {
+    subject: "Welcome Offer",
+    message:
+      "Hi {{name}}, welcome to our restaurant! We hope you enjoyed your first order. Here is a special reason to come back for your next one.",
+  },
+
+  at_risk: {
+    subject: "We Miss You",
+    message:
+      "Hi {{name}}, we haven't seen you in a while. We would love to have you back. Here's a special offer just for you!",
+  },
+};
+
+
+const whatsappTemplates = [
+  {
+    name: "hello_world",
+    language: "en_US",
+    label: "Hello World",
+    description: "Meta default test template",
+    parameterCount: 0,
+    parameterLabels: [],
+  },
+];
+
+export default function CampaignsPage() {
+const [customers, setCustomers] = useState<
+    AudienceCustomer[]
+  >([]);
+
+  const [campaigns, setCampaigns] = useState<
+    Campaign[]
+  >([]);
+  const [orders, setOrders] = useState<CampaignOrder[]>([]);
+
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const [segment, setSegment] =
+    useState<SegmentKey>("vip");
+
+  const [channel, setChannel] =
+    useState<Channel>("whatsapp");
+
+  const [templateName, setTemplateName] =
+    useState("hello_world");
+
+  const [templateLanguage, setTemplateLanguage] =
+    useState("en_US");
+  const [sendCustomerName, setSendCustomerName] =
+    useState(false);
+
+
+  const [subject, setSubject] = useState(
+    templates.vip.subject
+  );
+
+  const [message, setMessage] = useState(
+    templates.vip.message
+  );
+
+  const [campaignName, setCampaignName] =
+    useState("VIP Loyalty Campaign");
+
+  const [scheduledAt, setScheduledAt] =
+    useState("");
+
+  const [editingCampaignId, setEditingCampaignId] =
+    useState<string | null>(null);
+
+  const [savedMessage, setSavedMessage] =
+    useState("");
+  useEffect(() => {
+    const params = new URLSearchParams(
+      window.location.search
+    );
+
+    const requestedSegment =
+      params.get("segment");
+
+    if (
+      requestedSegment === "vip" ||
+      requestedSegment === "returning" ||
+      requestedSegment === "new" ||
+      requestedSegment === "at_risk"
+    ) {
+      setSegment(requestedSegment);
+
+      setSubject(
+        templates[requestedSegment].subject
+      );
+
+      setMessage(
+        templates[requestedSegment].message
+      );
+
+      setCampaignName(
+        requestedSegment === "vip"
+          ? "VIP Loyalty Campaign"
+          : requestedSegment === "returning"
+          ? "Returning Customer Campaign"
+          : requestedSegment === "new"
+          ? "New Customer Campaign"
+          : "Win-back Campaign"
+      );
+    }
+  }, []);
+  async function getRestaurantId(
+    supabase: ReturnType<typeof createClient>
+  ) {
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      throw new Error("You are not logged in.");
+    }
+
+    const {
+      data: restaurant,
+      error: restaurantError,
+    } = await supabase
+      .from("restaurants")
+      .select("id")
+      .eq("owner_id", user.id)
+      .single();
+
+    if (restaurantError || !restaurant) {
+      throw new Error(
+        restaurantError?.message ||
+          "Restaurant not found."
+      );
+    }
+
+    return restaurant.id;
+  }
+
+  async function loadData() {
+    try {
+      setLoading(true);
+      setError("");
+
+      const supabase = createClient();
+
+      const restaurantId =
+        await getRestaurantId(supabase);
+
+      const {
+        data: customersData,
+        error: customersError,
+      } = await supabase
+        .from("customers")
+        .select(`
+          id,
+          name,
+          email,
+          phone,
+          total_orders,
+          total_spent,
+          last_order_at
+        `)
+        .eq("restaurant_id", restaurantId)
+        .order("name");
+
+      if (customersError) {
+        throw new Error(
+          customersError.message
+        );
+      }
+
+      const now = new Date();
+
+      const formattedCustomers =
+        (customersData || []).map(
+          (customer) => {
+            let daysSinceLastOrder:
+              | number
+              | null = null;
+
+            if (customer.last_order_at) {
+              const lastOrder =
+                new Date(
+                  customer.last_order_at
+                );
+
+              daysSinceLastOrder =
+                Math.max(
+                  0,
+                  Math.floor(
+                    (now.getTime() -
+                      lastOrder.getTime()) /
+                      (1000 *
+                        60 *
+                        60 *
+                        24)
+                  )
+                );
+            }
+
+            return {
+              ...customer,
+              daysSinceLastOrder,
+            };
+          }
+        );
+
+      setCustomers(formattedCustomers);
+      const {
+        data: ordersData,
+        error: ordersError,
+      } = await supabase
+        .from("orders")
+        .select(`
+          id,
+          customer_id,
+          total,
+          currency_code,
+          status,
+          created_at
+        `)
+        .eq("restaurant_id", restaurantId)
+        .order("created_at", {
+          ascending: false,
+        });
+
+      if (ordersError) {
+        throw new Error(ordersError.message);
+      }
+
+      setOrders(
+        (ordersData || []) as CampaignOrder[]
+      );
+
+      const {
+        data: campaignsData,
+        error: campaignsError,
+      } = await supabase
+        .from("campaigns")
+        .select(`
+          id,
+          restaurant_id,
+          name,
+          segment,
+          channel,
+          subject,
+          message,
+          status,
+          audience_count,
+           template_name,
+           template_language,
+          scheduled_at,
+          sent_at,
+          created_at,
+          updated_at
+        `)
+        .eq("restaurant_id", restaurantId)
+        .order("created_at", {
+          ascending: false,
+        });
+
+      if (campaignsError) {
+        throw new Error(
+          campaignsError.message
+        );
+      }
+
+      setCampaigns(
+        (campaignsData || []) as Campaign[]
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Something went wrong."
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const audiences = useMemo(() => {
+    const profiles = customers.map((customer) => {
+      const customerOrders = orders.filter(
+        (order) =>
+          order.customer_id === customer.id
+      );
+
+      const revenueByCurrency: Record<string, number> = {};
+
+      let lastOrderAt: string | null = null;
+
+      for (const order of customerOrders) {
+        const currency =
+          order.currency_code || "EGP";
+
+        revenueByCurrency[currency] =
+          (revenueByCurrency[currency] || 0) +
+          Number(order.total || 0);
+
+        if (
+          !lastOrderAt ||
+          new Date(order.created_at).getTime() >
+            new Date(lastOrderAt).getTime()
+        ) {
+          lastOrderAt = order.created_at;
+        }
+      }
+
+      const currencyValues =
+        Object.values(revenueByCurrency);
+
+      const maxSingleCurrencySpend =
+        currencyValues.length > 0
+          ? Math.max(...currencyValues)
+          : 0;
+
+      const daysSinceLastOrder =
+        lastOrderAt
+          ? Math.max(
+              0,
+              Math.floor(
+                (Date.now() -
+                  new Date(lastOrderAt).getTime()) /
+                  (1000 * 60 * 60 * 24)
+              )
+            )
+          : null;
+
+      return {
+        ...customer,
+        smartOrderCount: customerOrders.length,
+        smartLastOrderAt: lastOrderAt,
+        smartDaysSinceLastOrder:
+          daysSinceLastOrder,
+        smartMaxSingleCurrencySpend:
+          maxSingleCurrencySpend,
+      };
+    });
+
+    const vip = profiles.filter(
+      (customer) =>
+        customer.smartOrderCount >= 5 ||
+        customer.smartMaxSingleCurrencySpend >= 500
+    );
+
+    const returning = profiles.filter(
+      (customer) =>
+        customer.smartOrderCount >= 2 &&
+        customer.smartOrderCount < 5 &&
+        customer.smartMaxSingleCurrencySpend < 500
+    );
+
+    const newCustomers = profiles.filter(
+      (customer) =>
+        customer.smartOrderCount <= 1
+    );
+
+    const atRisk = profiles.filter(
+      (customer) =>
+        customer.smartOrderCount > 0 &&
+        customer.smartDaysSinceLastOrder !== null &&
+        customer.smartDaysSinceLastOrder >= 30 &&
+        customer.smartDaysSinceLastOrder < 60
+    );
+
+    return {
+      vip,
+      returning,
+      newCustomers,
+      atRisk,
+    };
+  }, [customers, orders]);
+
+  const selectedAudience =
+    useMemo(() => {
+      switch (segment) {
+        case "vip":
+          return audiences.vip;
+
+        case "returning":
+          return audiences.returning;
+
+        case "new":
+          return audiences.newCustomers;
+
+        case "at_risk":
+          return audiences.atRisk;
+      }
+    }, [segment, audiences]);
+
+
+
+  function getCampaignCustomerRevenue(customerId: string) {
+    const totals: Record<string, number> = {};
+
+    for (const order of orders) {
+      if (order.customer_id !== customerId) {
+        continue;
+      }
+
+      const currency =
+        order.currency_code || "EGP";
+
+      totals[currency] =
+        (totals[currency] || 0) +
+        Number(order.total || 0);
+    }
+
+    return Object.entries(totals).sort(
+      (a, b) => b[1] - a[1]
+    );
+  }
+  const campaignIntelligence = useMemo(() => {
+    const reachable = selectedAudience.filter(
+      (customer) =>
+        Boolean(customer.phone?.trim())
+    ).length;
+
+    const revenueByCurrency: Record<string, number> = {};
+
+    for (const customer of selectedAudience) {
+      const customerOrders = orders.filter(
+        (order) =>
+          order.customer_id === customer.id
+      );
+
+      for (const order of customerOrders) {
+        const currency =
+          order.currency_code || "EGP";
+
+        revenueByCurrency[currency] =
+          (revenueByCurrency[currency] || 0) +
+          Number(order.total || 0);
+      }
+    }
+
+    const audienceValue =
+      Object.entries(revenueByCurrency);
+
+    let recommendedChannel = "WhatsApp";
+
+    if (
+      selectedAudience.length > 0 &&
+      reachable / selectedAudience.length < 0.4
+    ) {
+      const emailReady = selectedAudience.filter(
+        (customer) =>
+          Boolean(customer.email?.trim())
+      ).length;
+
+      recommendedChannel =
+        emailReady > reachable
+          ? "Email"
+          : "WhatsApp";
+    }
+
+    let recommendedAction =
+      "Send a personalized offer.";
+
+    if (segment === "vip") {
+      recommendedAction =
+        "Use an exclusive loyalty offer to increase repeat purchase frequency.";
+    }
+
+    if (segment === "returning") {
+      recommendedAction =
+        "Give a small incentive to move repeat buyers toward VIP behavior.";
+    }
+
+    if (segment === "new") {
+      recommendedAction =
+        "Drive the second order with a welcome-back offer.";
+    }
+
+    if (segment === "at_risk") {
+      recommendedAction =
+        "Run a win-back campaign before the customer becomes lost.";
+    }
+
+    return {
+      reachable,
+      revenueByCurrency: audienceValue,
+      recommendedChannel,
+      recommendedAction,
+    };
+  }, [selectedAudience, orders, segment]);
+  const campaignStats = useMemo(() => {
+    return {
+      drafts: campaigns.filter(
+        (campaign) =>
+          campaign.status === "draft"
+      ).length,
+
+      scheduled: campaigns.filter(
+        (campaign) =>
+          campaign.status === "scheduled"
+      ).length,
+
+      sent: campaigns.filter(
+        (campaign) =>
+          campaign.status === "sent"
+      ).length,
+
+      cancelled: campaigns.filter(
+        (campaign) =>
+          campaign.status === "cancelled"
+      ).length,
+    };
+  }, [campaigns]);
+
+  function changeSegment(
+    newSegment: SegmentKey
+  ) {
+    setSegment(newSegment);
+
+    setSubject(
+      templates[newSegment].subject
+    );
+
+    setMessage(
+      templates[newSegment].message
+    );
+
+    setCampaignName(
+      newSegment === "at_risk"
+        ? "Win-back Campaign"
+        : newSegment === "vip"
+        ? "VIP Loyalty Campaign"
+        : newSegment === "returning"
+        ? "Returning Customer Campaign"
+        : "New Customer Campaign"
+    );
+
+    setEditingCampaignId(null);
+    setScheduledAt("");
+    setSavedMessage("");
+  }
+
+  function getSegmentLabel(
+    segmentValue: SegmentKey
+  ) {
+    switch (segmentValue) {
+      case "vip":
+        return "VIP Customers";
+
+      case "returning":
+        return "Returning Customers";
+
+      case "new":
+        return "New Customers";
+
+      case "at_risk":
+        return "At Risk Customers";
+    }
+  }
+
+  function getChannelLabel(
+    channelValue: Channel
+  ) {
+    switch (channelValue) {
+      case "whatsapp":
+        return "WhatsApp";
+
+      case "sms":
+        return "SMS";
+
+      case "email":
+        return "Email";
+    }
+  }
+
+  function getStatusClass(
+    status: CampaignStatus
+  ) {
+    switch (status) {
+      case "draft":
+        return "bg-gray-100 text-gray-700";
+
+      case "scheduled":
+        return "bg-blue-100 text-blue-700";
+
+      case "sent":
+        return "bg-green-100 text-green-700";
+
+      case "cancelled":
+        return "bg-red-100 text-red-700";
+    }
+  }
+
+  function getStatusLabel(
+    status: CampaignStatus
+  ) {
+    switch (status) {
+      case "draft":
+        return "Draft";
+
+      case "scheduled":
+        return "Scheduled";
+
+      case "sent":
+        return "Sent";
+
+      case "cancelled":
+        return "Cancelled";
+    }
+  }
+
+  function previewMessage() {
+    const firstCustomer =
+      selectedAudience[0];
+
+    if (!firstCustomer) {
+      return message.replace(
+        "{{name}}",
+        "Customer"
+      );
+    }
+
+    return message.replace(
+      "{{name}}",
+      firstCustomer.name
+    );
+  }
+
+  function openCampaign(
+    campaign: Campaign
+  ) {
+    setEditingCampaignId(campaign.id);
+    setCampaignName(campaign.name);
+    setSegment(campaign.segment);
+    setChannel(campaign.channel);
+    setSubject(campaign.subject || "");
+    setMessage(campaign.message);
+
+    
+
+    setTemplateName(
+      campaign.template_name || "hello_world"
+    );
+
+    setTemplateLanguage(
+      campaign.template_language || "en_US"
+    );
+if (campaign.scheduled_at) {
+      const date =
+        new Date(
+          campaign.scheduled_at
+        );
+
+      const localDate =
+        new Date(
+          date.getTime() -
+            date.getTimezoneOffset() *
+              60000
+        )
+          .toISOString()
+          .slice(0, 16);
+
+      setScheduledAt(localDate);
+    } else {
+      setScheduledAt("");
+    }
+
+    setSavedMessage("");
+
+    window.scrollTo({
+      top: 0,
+      behavior: "smooth",
+    });
+  }
+
+  function startNewCampaign() {
+    setEditingCampaignId(null);
+
+    setCampaignName("Win-back Campaign");
+    setSegment("at_risk");
+    setChannel("whatsapp");
+    
+    setTemplateName("hello_world");
+    setTemplateLanguage("en_US");
+    
+    setSendCustomerName(false);
+setSubject(
+      templates.vip.subject
+    );
+    setMessage(
+      templates.vip.message
+    );
+    setScheduledAt("");
+
+    setSavedMessage("");
+
+    window.scrollTo({
+      top: 0,
+      behavior: "smooth",
+    });
+  }
+
+  async function rebuildRecipientQueue(
+    supabase: ReturnType<typeof createClient>,
+    campaignId: string,
+    mode: "draft" | "scheduled"
+  ) {
+    // Always remove the previous queue first.
+    // This keeps the queue synchronized with
+    // the current selected audience.
+    const {
+      error: deleteRecipientsError,
+    } = await supabase
+      .from("campaign_recipients")
+      .delete()
+      .eq("campaign_id", campaignId);
+
+    if (deleteRecipientsError) {
+      throw new Error(
+        deleteRecipientsError.message
+      );
+    }
+
+    // Draft campaigns do not enter the execution queue.
+    if (mode !== "scheduled") {
+      return;
+    }
+
+    if (selectedAudience.length === 0) {
+      return;
+    }
+
+    const recipients =
+      selectedAudience.map(
+        (customer) => ({
+          campaign_id: campaignId,
+          customer_id: customer.id,
+          phone:
+            customer.phone || null,
+          status: "queued",
+        })
+      );
+
+    const {
+      error: recipientInsertError,
+    } = await supabase
+      .from("campaign_recipients")
+      .insert(recipients);
+
+    if (recipientInsertError) {
+      throw new Error(
+        recipientInsertError.message
+      );
+    }
+  }
+
+  async function saveCampaign(
+    mode: "draft" | "scheduled"
+  ) {
+    if (!campaignName.trim()) {
+      alert(
+        "Please enter campaign name."
+      );
+      return;
+    }
+
+    if (!message.trim()) {
+      alert(
+        "Please enter a campaign message."
+      );
+      return;
+    }
+
+    if (
+      mode === "scheduled" &&
+      !scheduledAt
+    ) {
+      alert(
+        "Please select a date and time."
+      );
+      return;
+    }
+
+    if (mode === "scheduled") {
+      const selectedDate =
+        new Date(scheduledAt);
+
+      if (
+        Number.isNaN(
+          selectedDate.getTime()
+        )
+      ) {
+        alert(
+          "Please select a valid date and time."
+        );
+        return;
+      }
+
+      if (
+        selectedDate.getTime() <=
+        Date.now()
+      ) {
+        alert(
+          "Scheduled time must be in the future."
+        );
+        return;
+      }
+    }
+
+    try {
+      setSaving(true);
+      setSavedMessage("");
+
+      const supabase = createClient();
+
+      const restaurantId =
+        await getRestaurantId(supabase);
+
+      const payload = {
+        restaurant_id: restaurantId,
+        name: campaignName.trim(),
+        segment,
+        channel,
+
+        template_name:
+          channel === "whatsapp"
+            ? templateName.trim() || "hello_world"
+            : null,
+
+        template_language:
+          channel === "whatsapp"
+            ? templateLanguage.trim() || "en_US"
+            : null,
+
+        subject:
+          channel === "email"
+            ? subject.trim() || null
+            : null,
+        message: message.trim(),
+        status: mode,
+        audience_count:
+          selectedAudience.length,
+        scheduled_at:
+          mode === "scheduled"
+            ? new Date(
+                scheduledAt
+              ).toISOString()
+            : null,
+        sent_at: null,
+      };
+
+      let campaignId =
+        editingCampaignId;
+
+      // =========================================
+      // CREATE CAMPAIGN
+      // =========================================
+
+      if (!editingCampaignId) {
+        const {
+          data: insertedCampaign,
+          error: insertError,
+        } = await supabase
+          .from("campaigns")
+          .insert(payload)
+          .select("id")
+          .single();
+
+        if (insertError) {
+          throw new Error(
+            insertError.message
+          );
+        }
+
+        if (!insertedCampaign?.id) {
+          throw new Error(
+            "Campaign was created but no campaign ID was returned."
+          );
+        }
+
+        campaignId =
+          insertedCampaign.id;
+      }
+
+      // =========================================
+      // UPDATE CAMPAIGN
+      // =========================================
+
+      else {
+        const {
+          error: updateError,
+        } = await supabase
+          .from("campaigns")
+          .update(payload)
+          .eq(
+            "id",
+            editingCampaignId
+          )
+          .eq(
+            "restaurant_id",
+            restaurantId
+          );
+
+        if (updateError) {
+          throw new Error(
+            updateError.message
+          );
+        }
+      }
+
+      // =========================================
+      // CREATE / REBUILD RECIPIENT QUEUE
+      // =========================================
+
+      if (campaignId) {
+        await rebuildRecipientQueue(
+          supabase,
+          campaignId,
+          mode
+        );
+      }
+
+      // =========================================
+      // SUCCESS MESSAGE
+      // =========================================
+
+      if (mode === "scheduled") {
+        setSavedMessage(
+          `Campaign scheduled successfully with ${selectedAudience.length} queued recipient${
+            selectedAudience.length === 1
+              ? ""
+              : "s"
+          }.`
+        );
+      } else if (editingCampaignId) {
+        setSavedMessage(
+          "Campaign draft updated successfully."
+        );
+      } else {
+        setSavedMessage(
+          "Campaign draft saved successfully."
+        );
+      }
+
+      await loadData();
+    } catch (err) {
+      alert(
+        err instanceof Error
+          ? err.message
+          : "Something went wrong while saving campaign."
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function cancelCampaign(
+    campaignId: string
+  ) {
+    const confirmed =
+      window.confirm(
+        "Cancel this campaign?"
+      );
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      const supabase = createClient();
+
+      const restaurantId =
+        await getRestaurantId(supabase);
+
+      const {
+        error: updateError,
+      } = await supabase
+        .from("campaigns")
+        .update({
+          status: "cancelled",
+        })
+        .eq(
+          "id",
+          campaignId
+        )
+        .eq(
+          "restaurant_id",
+          restaurantId
+        );
+
+      if (updateError) {
+        throw new Error(
+          updateError.message
+        );
+      }
+
+      // Remove queued recipients because
+      // the campaign is no longer executable.
+      const {
+        error:
+          deleteRecipientsError,
+      } = await supabase
+        .from("campaign_recipients")
+        .delete()
+        .eq(
+          "campaign_id",
+          campaignId
+        );
+
+      if (deleteRecipientsError) {
+        throw new Error(
+          deleteRecipientsError.message
+        );
+      }
+
+      await loadData();
+    } catch (err) {
+      alert(
+        err instanceof Error
+          ? err.message
+          : "Something went wrong while cancelling campaign."
+      );
+    }
+  }
+
+  async function deleteCampaign(
+    campaignId: string
+  ) {
+    const confirmed =
+      window.confirm(
+        "Delete this campaign permanently?"
+      );
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      const supabase = createClient();
+
+      const restaurantId =
+        await getRestaurantId(supabase);
+
+      const {
+        error: deleteError,
+      } = await supabase
+        .from("campaigns")
+        .delete()
+        .eq(
+          "id",
+          campaignId
+        )
+        .eq(
+          "restaurant_id",
+          restaurantId
+        );
+
+      if (deleteError) {
+        throw new Error(
+          deleteError.message
+        );
+      }
+
+      if (
+        editingCampaignId === campaignId
+      ) {
+        startNewCampaign();
+      }
+
+      await loadData();
+    } catch (err) {
+      alert(
+        err instanceof Error
+          ? err.message
+          : "Something went wrong while deleting campaign."
+      );
+    }
+  }
+
+  if (loading) {
+    return (
+      <AppShell title="Campaigns">
+        <div className="rounded-2xl border bg-white p-6 text-gray-500 shadow-sm">
+          Loading campaign center...
+        </div>
+      </AppShell>
+    );
+  }
+
+  if (error) {
+    return (
+      <AppShell title="Campaigns">
+        <div className="rounded-2xl border border-red-200 bg-red-50 p-6 text-red-600">
+          <strong>Error:</strong>{" "}
+          {error}
+        </div>
+      </AppShell>
+    );
+  }
+
+  return (
+    <AppShell title="Campaigns">
+      <div className="space-y-6">
+
+        {/* Header */}
+
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+
+          <div>
+
+            <h2 className="text-xl font-semibold text-gray-900">
+              Campaign Center
+            </h2>
+
+            <p className="mt-1 text-sm text-gray-500">
+              Build, schedule, and manage targeted customer retention campaigns.
+            </p>
+
+          </div>
+
+
+          <div className="flex gap-3">
+
+            <div className="rounded-lg bg-blue-50 px-4 py-2 text-sm font-medium text-blue-700">
+              {selectedAudience.length} customers targeted
+            </div>
+
+            <button
+              onClick={startNewCampaign}
+              className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"
+            >
+              + New Campaign
+            </button>
+
+          </div>
+
+        </div>
+
+
+        {/* KPI */}
+
+        <div className="grid gap-5 md:grid-cols-4">
+
+          <div className="rounded-2xl border bg-white p-6 shadow-sm">
+
+            <p className="text-sm text-gray-500">
+              Drafts
+            </p>
+
+            <h3 className="mt-2 text-3xl font-bold text-gray-700">
+              {campaignStats.drafts}
+            </h3>
+
+          </div>
+
+
+          <div className="rounded-2xl border bg-white p-6 shadow-sm">
+
+            <p className="text-sm text-gray-500">
+              Scheduled
+            </p>
+
+            <h3 className="mt-2 text-3xl font-bold text-blue-600">
+              {campaignStats.scheduled}
+            </h3>
+
+          </div>
+
+
+          <div className="rounded-2xl border bg-white p-6 shadow-sm">
+
+            <p className="text-sm text-gray-500">
+              Sent
+            </p>
+
+            <h3 className="mt-2 text-3xl font-bold text-green-600">
+              {campaignStats.sent}
+            </h3>
+
+          </div>
+
+
+          <div className="rounded-2xl border bg-white p-6 shadow-sm">
+
+            <p className="text-sm text-gray-500">
+              Current Audience
+            </p>
+
+            <h3 className="mt-2 text-3xl font-bold text-purple-600">
+              {selectedAudience.length}
+            </h3>
+
+            <p className="mt-2 text-xs text-gray-400">
+              {getSegmentLabel(segment)}
+            </p>
+
+          </div>
+
+        </div>
+
+
+        <CampaignROI />
+
+        {/* Campaign Intelligence */}
+        <div className="rounded-2xl border border-blue-100 bg-gradient-to-br from-blue-50 to-white p-6 shadow-sm">
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+
+            <div>
+              <p className="text-sm font-medium text-blue-600">
+                Customer Intelligence
+              </p>
+
+              <h3 className="mt-1 text-xl font-bold text-gray-900">
+                Campaign Intelligence
+              </h3>
+
+              <p className="mt-1 text-sm text-gray-500">
+                Turn the selected audience into an actionable campaign.
+              </p>
+            </div>
+
+            <div className="rounded-xl bg-white px-4 py-3 shadow-sm">
+              <p className="text-xs text-gray-500">
+                Recommended Channel
+              </p>
+
+              <p className="mt-1 font-bold text-gray-900">
+                {campaignIntelligence.recommendedChannel}
+              </p>
+            </div>
+
+          </div>
+
+          <div className="mt-6 grid gap-4 md:grid-cols-4">
+
+            <div className="rounded-xl bg-white p-4 shadow-sm">
+              <p className="text-xs text-gray-500">
+                Audience
+              </p>
+
+              <p className="mt-2 text-2xl font-bold text-gray-900">
+                {selectedAudience.length}
+              </p>
+
+              <p className="mt-1 text-xs text-gray-400">
+                customers
+              </p>
+            </div>
+
+            <div className="rounded-xl bg-white p-4 shadow-sm">
+              <p className="text-xs text-gray-500">
+                Reachable
+              </p>
+
+              <p className="mt-2 text-2xl font-bold text-green-600">
+                {campaignIntelligence.reachable}
+              </p>
+
+              <p className="mt-1 text-xs text-gray-400">
+                contacts available
+              </p>
+            </div>
+
+            <div className="rounded-xl bg-white p-4 shadow-sm">
+              <p className="text-xs text-gray-500">
+                Audience Value
+              </p>
+
+              <div className="mt-2 space-y-1">
+                {campaignIntelligence.revenueByCurrency.length === 0 ? (
+                  <span className="text-sm text-gray-400">
+                    No revenue
+                  </span>
+                ) : (
+                  campaignIntelligence.revenueByCurrency.map(
+                    ([currency, amount]) => (
+                      <div
+                        key={currency}
+                        className="font-bold text-emerald-600"
+                      >
+                        {amount.toLocaleString("en-US", {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}{" "}
+                        {currency}
+                      </div>
+                    )
+                  )
+                )}
+              </div>
+            </div>
+
+            <div className="rounded-xl bg-white p-4 shadow-sm">
+              <p className="text-xs text-gray-500">
+                Segment
+              </p>
+
+              <p className="mt-2 font-bold text-purple-600">
+                {getSegmentLabel(segment)}
+              </p>
+
+              <p className="mt-2 text-xs leading-5 text-gray-400">
+                {campaignIntelligence.recommendedAction}
+              </p>
+            </div>
+
+          </div>
+        </div>
+        {/* Builder */}
+
+        <div className="grid gap-6 lg:grid-cols-3">
+
+          <div className="lg:col-span-2 rounded-2xl border bg-white p-6 shadow-sm">
+
+            <div className="mb-6 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+
+              <div>
+
+                <h3 className="text-lg font-semibold text-gray-900">
+                  {editingCampaignId
+                    ? "Edit Campaign"
+                    : "Campaign Builder"}
+                </h3>
+
+                <p className="mt-1 text-sm text-gray-500">
+                  Configure the audience, message, and schedule.
+                </p>
+
+              </div>
+
+              {editingCampaignId && (
+                <button
+                  onClick={
+                    startNewCampaign
+                  }
+                  className="text-sm font-medium text-blue-600 hover:text-blue-700"
+                >
+                  Start New
+                </button>
+              )}
+
+            </div>
+
+
+            <div className="space-y-5">
+
+              {/* Campaign Name */}
+
+              <div>
+
+                <label className="mb-2 block text-sm font-medium text-gray-700">
+                  Campaign Name
+                </label>
+
+                <input
+                  type="text"
+                  value={campaignName}
+                  onChange={(e) =>
+                    setCampaignName(
+                      e.target.value
+                    )
+                  }
+                  placeholder="Weekend Win-back"
+                  className="w-full rounded-lg border px-4 py-2 outline-none focus:border-blue-500"
+                />
+
+              </div>
+
+
+              {/* Audience */}
+
+              <div>
+
+                <label className="mb-2 block text-sm font-medium text-gray-700">
+                  Audience
+                </label>
+
+                <div className="grid gap-3 sm:grid-cols-2">
+
+                  <button
+                    onClick={() =>
+                      changeSegment(
+                        "at_risk"
+                      )
+                    }
+                    className={`rounded-xl border p-4 text-left transition ${
+                      segment ===
+                      "at_risk"
+                        ? "border-orange-300 bg-orange-50"
+                        : "hover:bg-gray-50"
+                    }`}
+                  >
+
+                    <div className="flex items-center justify-between">
+
+                      <span className="font-semibold text-gray-900">
+                        At Risk
+                      </span>
+
+                      <span className="text-orange-600">
+                        {
+                          audiences
+                            .atRisk
+                            .length
+                        }
+                      </span>
+
+                    </div>
+
+                    <p className="mt-1 text-xs text-gray-500">
+                      30+ days inactive
+                    </p>
+
+                  </button>
+
+
+                  <button
+                    onClick={() =>
+                      changeSegment("vip")
+                    }
+                    className={`rounded-xl border p-4 text-left transition ${
+                      segment === "vip"
+                        ? "border-purple-300 bg-purple-50"
+                        : "hover:bg-gray-50"
+                    }`}
+                  >
+
+                    <div className="flex items-center justify-between">
+
+                      <span className="font-semibold text-gray-900">
+                        VIP
+                      </span>
+
+                      <span className="text-purple-600">
+                        {audiences.vip.length}
+                      </span>
+
+                    </div>
+
+                    <p className="mt-1 text-xs text-gray-500">
+                      Highest-value customers
+                    </p>
+
+                  </button>
+
+
+                  <button
+                    onClick={() =>
+                      changeSegment(
+                        "returning"
+                      )
+                    }
+                    className={`rounded-xl border p-4 text-left transition ${
+                      segment ===
+                      "returning"
+                        ? "border-blue-300 bg-blue-50"
+                        : "hover:bg-gray-50"
+                    }`}
+                  >
+
+                    <div className="flex items-center justify-between">
+
+                      <span className="font-semibold text-gray-900">
+                        Returning
+                      </span>
+
+                      <span className="text-blue-600">
+                        {
+                          audiences
+                            .returning
+                            .length
+                        }
+                      </span>
+
+                    </div>
+
+                    <p className="mt-1 text-xs text-gray-500">
+                      Repeat customers
+                    </p>
+
+                  </button>
+
+
+                  <button
+                    onClick={() =>
+                      changeSegment("new")
+                    }
+                    className={`rounded-xl border p-4 text-left transition ${
+                      segment === "new"
+                        ? "border-green-300 bg-green-50"
+                        : "hover:bg-gray-50"
+                    }`}
+                  >
+
+                    <div className="flex items-center justify-between">
+
+                      <span className="font-semibold text-gray-900">
+                        New
+                      </span>
+
+                      <span className="text-green-600">
+                        {
+                          audiences
+                            .newCustomers
+                            .length
+                        }
+                      </span>
+
+                    </div>
+
+                    <p className="mt-1 text-xs text-gray-500">
+                      0–1 orders
+                    </p>
+
+                  </button>
+
+                </div>
+
+              </div>
+
+
+              {/* Channel */}
+
+              <div>
+
+                <label className="mb-2 block text-sm font-medium text-gray-700">
+                  Channel
+                </label>
+
+                <div className="grid gap-3 md:grid-cols-3">
+
+                  <button
+                    onClick={() =>
+                      setChannel(
+                        "whatsapp"
+                      )
+                    }
+                    className={`rounded-lg border px-4 py-3 text-sm font-medium ${
+                      channel ===
+                      "whatsapp"
+                        ? "border-green-300 bg-green-50 text-green-700"
+                        : "text-gray-700 hover:bg-gray-50"
+                    }`}
+                  >
+                    WhatsApp
+                  </button>
+
+
+                  <button
+                    onClick={() =>
+                      setChannel("sms")
+                    }
+                    className={`rounded-lg border px-4 py-3 text-sm font-medium ${
+                      channel === "sms"
+                        ? "border-blue-300 bg-blue-50 text-blue-700"
+                        : "text-gray-700 hover:bg-gray-50"
+                    }`}
+                  >
+                    SMS
+                  </button>
+
+
+                  <button
+                    onClick={() =>
+                      setChannel("email")
+                    }
+                    className={`rounded-lg border px-4 py-3 text-sm font-medium ${
+                      channel ===
+                      "email"
+                        ? "border-purple-300 bg-purple-50 text-purple-700"
+                        : "text-gray-700 hover:bg-gray-50"
+                    }`}
+                  >
+                    Email
+                  </button>
+
+                </div>
+
+              </div>
+
+
+
+              {/* WhatsApp Template */}
+              {channel === "whatsapp" && (
+                <div className="rounded-xl border border-green-200 bg-green-50 p-5">
+                  <div className="mb-4 flex items-start justify-between gap-4">
+                    <div>
+                      <h4 className="font-semibold text-gray-900">
+                        WhatsApp Template
+                      </h4>
+
+                      <p className="mt-1 text-sm text-gray-600">
+                        WhatsApp campaigns are sent through an approved Meta template.
+                      </p>
+                    </div>
+
+                    <span className="rounded-full bg-green-100 px-3 py-1 text-xs font-semibold text-green-700">
+                      Meta Template
+                    </span>
+                  </div>
+
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div>
+                      <label className="mb-2 block text-sm font-medium text-gray-700">
+                        Template Name
+                      </label>
+
+                      <select
+                        value={templateName}
+                        onChange={(e) => {
+                          const selected = whatsappTemplates.find(
+                            (template) =>
+                              template.name === e.target.value
+                          );
+
+                          setTemplateName(
+                            selected?.name || "hello_world"
+                          );
+
+                          setTemplateLanguage(
+                            selected?.language || "en_US"
+                          );
+                        }}
+                        className="w-full rounded-lg border bg-white px-4 py-2 outline-none focus:border-green-500"
+                      >
+                        {whatsappTemplates.map((template) => (
+                          <option
+                            key={`${template.name}-${template.language}`}
+                            value={template.name}
+                          >
+                            {template.label} • {template.name}
+                          </option>
+                        ))}
+                      </select>
+
+                      <p className="mt-2 text-xs text-gray-500">
+                        Choose a configured Meta-approved WhatsApp template.
+                      </p>
+                    </div>
+
+                    <div>
+                      <label className="mb-2 block text-sm font-medium text-gray-700">
+                        Template Language
+                      </label>
+
+                      <input
+                        type="text"
+                        value={templateLanguage}
+                        onChange={(e) =>
+                          setTemplateLanguage(e.target.value)
+                        }
+                        placeholder="en_US"
+                        className="w-full rounded-lg border bg-white px-4 py-2 outline-none focus:border-green-500"
+                      />
+
+                      <p className="mt-2 text-xs text-gray-500">
+                        Example: en_US
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 rounded-lg border border-green-200 bg-white px-4 py-3">
+                    <p className="text-xs font-medium text-green-700">
+                      Current test template
+                    </p>
+
+                    <p className="mt-1 text-sm font-semibold text-gray-900">
+                      {templateName || "hello_world"}
+                      {" • "}
+                      {templateLanguage || "en_US"}
+                    </p>
+
+                    <p className="mt-1 text-xs text-gray-500">
+                      The actual WhatsApp message is controlled by the Meta template,
+                      not by arbitrary free text entered below.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Template Parameters */}
+              {channel === "whatsapp" && (
+                <div className="rounded-xl border border-purple-200 bg-purple-50 p-5">
+                  <div className="mb-4">
+                    <h4 className="font-semibold text-gray-900">
+                      Template Parameters
+                    </h4>
+
+                    <p className="mt-1 text-sm text-gray-600">
+                      Dynamic values can be injected into approved Meta template variables.
+                    </p>
+                  </div>
+
+                  {(() => {
+                    const selectedTemplate =
+                      whatsappTemplates.find(
+                        (template) =>
+                          template.name === templateName
+                      );
+
+                    const parameterCount =
+                      selectedTemplate?.parameterCount || 0;
+
+                    if (parameterCount === 0) {
+                      return (
+                        <div className="rounded-lg border border-gray-200 bg-white p-4">
+                          <p className="text-sm font-medium text-gray-800">
+                            This template has no variables.
+                          </p>
+
+                          <p className="mt-1 text-xs leading-5 text-gray-500">
+                            Select a Meta template containing variables such as
+                            {" {{1}} "}to enable customer personalization.
+                          </p>
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div className="space-y-3">
+                        <label className="flex cursor-pointer items-center gap-3 rounded-lg border bg-white p-4">
+                          <input
+                            type="checkbox"
+                            checked={sendCustomerName}
+                            onChange={(e) =>
+                              setSendCustomerName(
+                                e.target.checked
+                              )
+                            }
+                            className="h-4 w-4 rounded border-gray-300"
+                          />
+
+                          <div>
+                            <p className="text-sm font-medium text-gray-900">
+                              Customer Name
+                            </p>
+
+                            <p className="text-xs text-gray-500">
+                              Parameter 1 ? customer.name
+                            </p>
+                          </div>
+                        </label>
+                      </div>
+                    );
+                  })()}
+                </div>
+              )}
+              {/* Subject */}
+
+              {channel === "email" && (
+                <div>
+
+                  <label className="mb-2 block text-sm font-medium text-gray-700">
+                    Email Subject
+                  </label>
+
+                  <input
+                    type="text"
+                    value={subject}
+                    onChange={(e) =>
+                      setSubject(
+                        e.target.value
+                      )
+                    }
+                    className="w-full rounded-lg border px-4 py-2 outline-none focus:border-blue-500"
+                  />
+
+                </div>
+              )}
+
+
+              {/* Message */}
+
+              <div>
+
+                <div className="mb-2 flex items-center justify-between">
+
+                  <label className="block text-sm font-medium text-gray-700">
+                    Message
+                  </label>
+
+                  <span className="text-xs text-gray-400">
+                    {channel === "whatsapp"
+                      ? "WhatsApp delivery uses the selected Meta template."
+                      : "Use {{name}} for customer name"}
+                  </span>
+
+                </div>
+
+                <textarea
+                  value={message}
+                  onChange={(e) =>
+                    setMessage(
+                      e.target.value
+                    )
+                  }
+                  rows={7}
+                  className="w-full resize-none rounded-lg border px-4 py-3 outline-none focus:border-blue-500"
+                />
+
+              </div>
+
+
+              {/* Schedule */}
+
+              <div className="rounded-xl border bg-gray-50 p-5">
+
+                <div className="mb-4">
+
+                  <h4 className="font-semibold text-gray-900">
+                    Campaign Schedule
+                  </h4>
+
+                  <p className="mt-1 text-sm text-gray-500">
+                    Choose when this campaign should be marked as scheduled.
+                  </p>
+
+                </div>
+
+
+                <label className="mb-2 block text-sm font-medium text-gray-700">
+                  Date & Time
+                </label>
+
+                <input
+                  type="datetime-local"
+                  value={scheduledAt}
+                  min={new Date(
+                    Date.now() + 60000
+                  )
+                    .toISOString()
+                    .slice(0, 16)}
+                  onChange={(e) =>
+                    setScheduledAt(
+                      e.target.value
+                    )
+                  }
+                  className="w-full rounded-lg border bg-white px-4 py-2 outline-none focus:border-blue-500"
+                />
+
+                <p className="mt-2 text-xs text-gray-400">
+                  Scheduling creates a recipient queue for the selected audience. WhatsApp delivery is executed through Meta Cloud API using the selected template.
+                </p>
+
+              </div>
+
+
+              {/* Actions */}
+
+              <div className="flex flex-col gap-3 sm:flex-row">
+
+                <button
+                  onClick={() =>
+                    saveCampaign("draft")
+                  }
+                  disabled={saving}
+                  className="rounded-lg border px-5 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                >
+                  {saving
+                    ? "Saving..."
+                    : "Save Draft"}
+                </button>
+
+
+                <button
+                  onClick={() =>
+                    saveCampaign(
+                      "scheduled"
+                    )
+                  }
+                  disabled={saving}
+                  className="rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {saving
+                    ? "Saving..."
+                    : "Schedule Campaign"}
+                </button>
+
+              </div>
+
+
+              {savedMessage && (
+                <div className="rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+                  {savedMessage}
+                </div>
+              )}
+
+            </div>
+
+          </div>
+
+
+          {/* Preview */}
+
+          <div className="rounded-2xl border bg-white p-6 shadow-sm">
+
+            <div className="mb-6">
+
+              <h3 className="text-lg font-semibold text-gray-900">
+                Message Preview
+              </h3>
+
+              <p className="mt-1 text-sm text-gray-500">
+                Preview the selected channel and WhatsApp template.
+              </p>
+
+            </div>
+
+
+            <div className="rounded-2xl bg-gray-50 p-5">
+
+              <div className="mb-4 flex items-center gap-3">
+
+                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-green-100 text-lg">
+                  💬
+                </div>
+
+                <div>
+
+                  <p className="font-semibold text-gray-900">
+                    {getChannelLabel(
+                      channel
+                    )}
+                  </p>
+
+                  <p className="text-xs text-gray-500">
+                    {
+                      selectedAudience.length
+                    }{" "}
+                    recipients
+                  </p>
+
+                </div>
+
+              </div>
+
+
+              {channel === "email" && (
+                <div className="mb-3 rounded-lg border bg-white p-3">
+
+                  <p className="text-xs text-gray-400">
+                    Subject
+                  </p>
+
+                  <p className="mt-1 font-medium text-gray-900">
+                    {subject}
+                  </p>
+
+                </div>
+              )}
+
+
+              <div className="rounded-2xl bg-white p-4 shadow-sm">
+
+                <div className="whitespace-pre-wrap text-sm leading-6 text-gray-700">
+                  {channel === "whatsapp"
+                    ? (
+                        <div className="space-y-2">
+                          <p>
+                            Template: {templateName || "hello_world"} • {templateLanguage || "en_US"}
+                          </p>
+
+                          {sendCustomerName && (
+                            <p className="text-xs text-purple-600">
+                              Parameter 1: Customer Name
+                            </p>
+                          )}
+                        </div>
+                      )
+                    : previewMessage()}
+                </div>
+
+              </div>
+
+            </div>
+
+
+            <div className="mt-5 rounded-xl border border-green-200 bg-green-50 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-green-800">
+                    WhatsApp Meta Cloud API Connected
+                  </p>
+
+                  <p className="mt-1 text-xs leading-5 text-green-700">
+                    Scheduled WhatsApp campaigns are queued and executed through
+                    the configured Meta template.
+                  </p>
+                </div>
+
+                <span className="rounded-full bg-green-100 px-3 py-1 text-xs font-semibold text-green-700">
+                  Connected
+                </span>
+              </div>
+            </div>
+
+          </div>
+
+        </div>
+
+
+        {/* Campaign History */}
+
+        <div className="overflow-hidden rounded-2xl border bg-white shadow-sm">
+
+          <div className="border-b p-6">
+
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+
+              <div>
+
+                <h3 className="text-lg font-semibold text-gray-900">
+                  Campaign History
+                </h3>
+
+                <p className="mt-1 text-sm text-gray-500">
+                  Manage drafts, scheduled campaigns, and campaign history.
+                </p>
+
+              </div>
+
+              <div className="rounded-lg bg-gray-50 px-4 py-2 text-sm font-medium text-gray-700">
+                {campaigns.length} campaigns
+              </div>
+
+            </div>
+
+          </div>
+
+
+          {campaigns.length === 0 ? (
+
+            <div className="p-12 text-center">
+
+              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-blue-50 text-2xl">
+                📣
+              </div>
+
+              <h4 className="mt-4 font-semibold text-gray-900">
+                No campaigns yet
+              </h4>
+
+              <p className="mt-1 text-sm text-gray-500">
+                Create your first campaign above.
+              </p>
+
+            </div>
+
+          ) : (
+
+            <div className="overflow-x-auto">
+
+              <table className="w-full text-left">
+
+                <thead className="border-b bg-gray-50 text-sm text-gray-500">
+
+                  <tr>
+
+                    <th className="px-6 py-4">
+                      Campaign
+                    </th>
+
+                    <th className="px-6 py-4">
+                      Audience
+                    </th>
+
+                    <th className="px-6 py-4">
+                      Channel
+                    </th>
+
+                    <th className="px-6 py-4">
+                      Recipients
+                    </th>
+
+                    <th className="px-6 py-4">
+                      Schedule
+                    </th>
+
+                    <th className="px-6 py-4">
+                      Status
+                    </th>
+
+                    <th className="px-6 py-4 text-right">
+                      Actions
+                    </th>
+
+                  </tr>
+
+                </thead>
+
+
+                <tbody>
+
+                  {campaigns.map(
+                    (campaign) => (
+
+                      <tr
+                        key={campaign.id}
+                        className="border-b last:border-0 hover:bg-gray-50"
+                      >
+
+                        <td className="px-6 py-4">
+
+                          <p className="font-medium text-gray-900">
+                            {campaign.name}
+                          </p>
+
+                          <p className="mt-1 text-xs text-gray-400">
+                            {getSegmentLabel(
+                              campaign.segment
+                            )}
+                          </p>
+
+                        </td>
+
+
+                        <td className="px-6 py-4">
+
+                          <span className="rounded-full bg-purple-100 px-3 py-1 text-xs font-medium text-purple-700">
+                            {
+                              getSegmentLabel(
+                                campaign.segment
+                              )
+                            }
+                          </span>
+
+                        </td>
+
+
+                        <td className="px-6 py-4 text-sm text-gray-700">
+                          {getChannelLabel(
+                            campaign.channel
+                          )}
+                        </td>
+
+
+                        <td className="px-6 py-4 font-medium text-gray-900">
+                          {
+                            campaign.audience_count
+                          }
+                        </td>
+
+
+                        <td className="px-6 py-4 text-sm text-gray-600">
+
+                          {campaign.scheduled_at
+                            ? new Date(
+                                campaign.scheduled_at
+                              ).toLocaleString()
+                            : "Not scheduled"}
+
+                        </td>
+
+
+                        <td className="px-6 py-4">
+
+                          <span
+                            className={`rounded-full px-3 py-1 text-xs font-medium ${getStatusClass(
+                              campaign.status
+                            )}`}
+                          >
+                            {getStatusLabel(
+                              campaign.status
+                            )}
+                          </span>
+
+                        </td>
+
+
+                        <td className="px-6 py-4">
+
+                          <div className="flex justify-end gap-2">
+
+                            <button
+                              onClick={() =>
+                                openCampaign(
+                                  campaign
+                                )
+                              }
+                              className="rounded-lg border px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                            >
+                              Edit
+                            </button>
+
+
+                            {campaign.status ===
+                              "scheduled" && (
+                              <button
+                                onClick={() =>
+                                  cancelCampaign(
+                                    campaign.id
+                                  )
+                                }
+                                className="rounded-lg border border-orange-200 px-3 py-1.5 text-xs font-medium text-orange-600 hover:bg-orange-50"
+                              >
+                                Cancel
+                              </button>
+                            )}
+
+
+                            {campaign.status !==
+                              "sent" && (
+                              <button
+                                onClick={() =>
+                                  deleteCampaign(
+                                    campaign.id
+                                  )
+                                }
+                                className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50"
+                              >
+                                Delete
+                              </button>
+                            )}
+
+                          </div>
+
+                        </td>
+
+                      </tr>
+
+                    )
+                  )}
+
+                </tbody>
+
+              </table>
+
+            </div>
+
+          )}
+
+        </div>
+
+
+        {/* Audience */}
+
+        <div className="overflow-hidden rounded-2xl border bg-white shadow-sm">
+
+          <div className="border-b p-6">
+
+            <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+
+              <div>
+
+                <h3 className="text-lg font-semibold text-gray-900">
+                  Selected Audience
+                </h3>
+
+                <p className="mt-1 text-sm text-gray-500">
+                  Customers currently matching the selected segment.
+                </p>
+
+              </div>
+
+              <div className="rounded-lg bg-gray-50 px-4 py-2 text-sm font-medium text-gray-700">
+                {
+                  selectedAudience.length
+                }{" "}
+                recipients
+              </div>
+
+            </div>
+
+          </div>
+
+
+          {selectedAudience.length === 0 ? (
+
+            <div className="p-12 text-center">
+
+              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-gray-50 text-2xl">
+                👥
+              </div>
+
+              <h4 className="mt-4 font-semibold text-gray-900">
+                No customers in this segment
+              </h4>
+
+              <p className="mt-1 text-sm text-gray-500">
+                Try another audience segment.
+              </p>
+
+            </div>
+
+          ) : (
+
+            <div className="overflow-x-auto">
+
+              <table className="w-full text-left">
+
+                <thead className="border-b bg-gray-50 text-sm text-gray-500">
+
+                  <tr>
+
+                    <th className="px-6 py-4">
+                      Customer
+                    </th>
+
+                    <th className="px-6 py-4">
+                      Contact
+                    </th>
+
+                    <th className="px-6 py-4">
+                      Orders
+                    </th>
+
+                    <th className="px-6 py-4">
+                      Lifetime Value
+                    </th>
+
+                    <th className="px-6 py-4">
+                      Last Order
+                    </th>
+
+                  </tr>
+
+                </thead>
+
+
+                <tbody>
+
+                  {selectedAudience.map(
+                    (customer) => (
+
+                      <tr
+                        key={
+                          customer.id
+                        }
+                        className="border-b last:border-0 hover:bg-gray-50"
+                      >
+
+                        <td className="px-6 py-4">
+
+                          <a
+                            href={`/customers/${customer.id}`}
+                            className="font-medium text-gray-900 hover:text-blue-600"
+                          >
+                            {customer.name}
+                          </a>
+
+                        </td>
+
+
+                        <td className="px-6 py-4 text-sm text-gray-600">
+
+                          {channel ===
+                            "whatsapp" ||
+                          channel === "sms"
+                            ? customer.phone ||
+                              "No phone"
+                            : customer.email ||
+                              "No email"}
+
+                        </td>
+
+
+                        <td className="px-6 py-4 font-medium text-gray-900">
+  {
+    orders.filter(
+      (order) =>
+        order.customer_id === customer.id
+    ).length
+  }
+</td>
+
+
+                        <td className="px-6 py-4 font-medium text-gray-900">
+  {getCampaignCustomerRevenue(customer.id).length === 0 ? (
+    <span className="text-gray-400">
+      No revenue
+    </span>
+  ) : (
+    <div className="space-y-1">
+      {getCampaignCustomerRevenue(customer.id).map(
+        ([currency, amount]) => (
+          <div key={currency}>
+            {amount.toLocaleString("en-US", {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            })}{" "}
+            {currency}
+          </div>
+        )
+      )}
+    </div>
+  )}
+</td>
+
+
+                        <td className="px-6 py-4 text-gray-600">
+
+                          {customer.last_order_at
+                            ? new Date(
+                                customer.last_order_at
+                              ).toLocaleDateString()
+                            : "Never"}
+
+                        </td>
+
+                      </tr>
+
+                    )
+                  )}
+
+                </tbody>
+
+              </table>
+
+            </div>
+
+          )}
+
+        </div>
+
+      </div>
+    </AppShell>
+  );
+}
+
+
+
+
+

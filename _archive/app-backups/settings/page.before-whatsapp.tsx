@@ -1,0 +1,2 @@
+import { AppShell } from "@/components/app-shell";
+export default function SettingsPage(){return <AppShell title="Settings"><div className="rounded-2xl border bg-white p-6 text-gray-500">Restaurant and subscription settings will be added after authentication.</div></AppShell>}

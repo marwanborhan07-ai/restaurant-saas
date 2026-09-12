@@ -1,0 +1,841 @@
+﻿1: "use client";
+1: 
+1: import Script from "next/script";
+1: import { useEffect, useMemo, useRef, useState } from "react";
+1: import { AppShell } from "@/components/app-shell";
+1: import { useLanguage } from "@/components/language-context";
+1: import { createClient } from "@/lib/supabase/client";
+1: 
+1: type Recipient = {
+1:   id: string;
+1:   customer_id: string;
+1:   phone: string | null;
+1:   status: string;
+1:   sent_at: string | null;
+1:   delivered_at: string | null;
+1:   read_at: string | null;
+1:   created_at: string;
+1:   customers:
+1:     | {
+1:         name: string;
+1:       }
+1:     | null;
+1: };
+1: 
+1: type FacebookLoginResponse = {
+1:   authResponse?: {
+1:     code?: string;
+1:   };
+1:   status?: string;
+1: };
+1: 
+1: type WhatsAppSignupData = {
+1:   wabaId: string;
+1:   phoneNumberId: string;
+1:   businessId: string;
+1: };
+1: 
+1: type WhatsAppSignupMessage = {
+1:   type?: string;
+1:   event?: string;
+1:   data?: {
+1:     waba_id?: string;
+1:     phone_number_id?: string;
+1:     business_id?: string;
+1:   };
+1:   version?: number;
+1: };
+1: 
+1: declare global {
+1:   interface Window {
+1:     FB?: {
+1:       init: (options: {
+1:         appId: string;
+1:         cookie?: boolean;
+1:         xfbml?: boolean;
+1:         version: string;
+1:       }) => void;
+1: 
+1:       login: (
+1:         callback: (response: FacebookLoginResponse) => void,
+1:         options: {
+1:           config_id: string;
+1:           response_type: "code";
+1:           override_default_response_type: boolean;
+1:           auth_type?: "rerequest";
+1:           extras?: {
+1:             setup?: Record<string, unknown>;
+1:           };
+1:         }
+1:       ) => void;
+1:     };
+1:   }
+1: }
+1: 
+1: export default function WhatsAppPage() {
+1:   const { language } = useLanguage();
+1:   const isArabic = language === "ar";
+1: 
+1:   const supabase = useMemo(() => createClient(), []);
+1: 
+1:   const [recipients, setRecipients] = useState<Recipient[]>([]);
+1:   const [loading, setLoading] = useState(true);
+1:   const [error, setError] = useState("");
+1:   const [advancedOpen, setAdvancedOpen] = useState(false);
+1: 
+1:   const [sdkReady, setSdkReady] = useState(false);
+1:   const [connecting, setConnecting] = useState(false);
+1:   const [connectionMessage, setConnectionMessage] = useState("");
+1: 
+1:   const signupDataRef =
+1:     useRef<WhatsAppSignupData | null>(null);
+1: 
+1:   const codeRef = useRef<string | null>(null);
+1: 
+1:   const finishTimerRef =
+1:     useRef<ReturnType<typeof setTimeout> | null>(null);
+1: 
+1:   const metaAppId =
+1:     process.env.NEXT_PUBLIC_META_APP_ID || "";
+1: 
+1:   const metaConfigId =
+1:     process.env.NEXT_PUBLIC_META_CONFIG_ID || "";
+1: 
+1:   async function loadData() {
+1:     try {
+1:       setLoading(true);
+1:       setError("");
+1: 
+1:       const {
+1:         data: { user },
+1:       } = await supabase.auth.getUser();
+1: 
+1:       if (!user) {
+1:         throw new Error(
+1:           isArabic
+1:             ? "??? ????? ?????? ?????."
+1:             : "You are not logged in."
+1:         );
+1:       }
+1: 
+1:       const {
+1:         data: restaurant,
+1:         error: restaurantError,
+1:       } = await supabase
+1:         .from("restaurants")
+1:         .select("id")
+1:         .eq("owner_id", user.id)
+1:         .single();
+1: 
+1:       if (restaurantError || !restaurant) {
+1:         throw new Error(
+1:           restaurantError?.message ||
+1:             (isArabic
+1:               ? "?? ??? ?????? ??? ??????."
+1:               : "Restaurant not found.")
+1:         );
+1:       }
+1: 
+1:       const {
+1:         data,
+1:         error: recipientsError,
+1:       } = await supabase
+1:         .from("campaign_recipients")
+1:         .select(
+1:           `
+1:             id,
+1:             customer_id,
+1:             phone,
+1:             status,
+1:             sent_at,
+1:             delivered_at,
+1:             read_at,
+1:             created_at,
+1:             customers(name),
+1:             campaigns!inner(restaurant_id)
+1:           `
+1:         )
+1:         .eq(
+1:           "campaigns.restaurant_id",
+1:           restaurant.id
+1:         )
+1:         .order("created_at", {
+1:           ascending: false,
+1:         })
+1:         .limit(50);
+1: 
+1:       if (recipientsError) {
+1:         throw new Error(
+1:           recipientsError.message
+1:         );
+1:       }
+1: 
+1:       const formatted = (data || []).map((item) => ({
+1:         ...item,
+1:         customers: Array.isArray(item.customers)
+1:           ? item.customers[0] ?? null
+1:           : item.customers,
+1:       }));
+1: 
+1:       setRecipients(
+1:         formatted as Recipient[]
+1:       );
+1:     } catch (err) {
+1:       setError(
+1:         err instanceof Error
+1:           ? err.message
+1:           : isArabic
+1:             ? "??? ??? ??? ?????."
+1:             : "Something went wrong."
+1:       );
+1:     } finally {
+1:       setLoading(false);
+1:     }
+1:   }
+1: 
+1:   async function completeConnection() {
+1:     const code = codeRef.current;
+1:     const signupData =
+1:       signupDataRef.current;
+1: 
+1:     if (!code || !signupData) {
+1:       return;
+1:     }
+1: 
+1:     setConnectionMessage(
+1:       isArabic
+1:         ? "???? ??? ????? WhatsApp..."
+1:         : "Saving WhatsApp connection..."
+1:     );
+1: 
+1:     try {
+1:       const response = await fetch(
+1:         "/api/whatsapp/connect",
+1:         {
+1:           method: "POST",
+1:           headers: {
+1:             "Content-Type": "application/json",
+1:           },
+1:           body: JSON.stringify({
+1:             code,
+1:             wabaId:
+1:               signupData.wabaId,
+1:             phoneNumberId:
+1:               signupData.phoneNumberId,
+1:           }),
+1:         }
+1:       );
+1: 
+1:       const result =
+1:         await response.json();
+1: 
+1:       if (!response.ok) {
+1:         throw new Error(
+1:           result.error ||
+1:             (isArabic
+1:               ? "??? ????? ??? WhatsApp."
+1:               : "Failed to finish WhatsApp connection.")
+1:         );
+1:       }
+1: 
+1:       setConnectionMessage(
+1:         isArabic
+1:           ? "?? ??? WhatsApp ?????."
+1:           : "WhatsApp connected successfully."
+1:       );
+1: 
+1:       codeRef.current = null;
+1:       signupDataRef.current = null;
+1: 
+1:       await loadData();
+1:     } catch (err) {
+1:       setConnectionMessage(
+1:         err instanceof Error
+1:           ? err.message
+1:           : isArabic
+1:             ? "??? ??? WhatsApp."
+1:             : "WhatsApp connection failed."
+1:       );
+1:     } finally {
+1:       setConnecting(false);
+1:     }
+1:   }
+1: 
+1:   useEffect(() => {
+1:     loadData();
+1:   }, [isArabic]);
+1: 
+1:   useEffect(() => {
+1:     function handleSignupMessage(
+1:       event: MessageEvent
+1:     ) {
+1:       if (
+1:         !event.origin.endsWith(
+1:           "facebook.com"
+1:         )
+1:       ) {
+1:         return;
+1:       }
+1: 
+1:       try {
+1:         const payload =
+1:           typeof event.data === "string"
+1:             ? JSON.parse(event.data)
+1:             : event.data;
+1: 
+1:         const message =
+1:           payload as WhatsAppSignupMessage;
+1: 
+1:         if (
+1:           message.type !==
+1:           "WA_EMBEDDED_SIGNUP"
+1:         ) {
+1:           return;
+1:         }
+1: 
+1:         const wabaId =
+1:           message.data?.waba_id || "";
+1: 
+1:         const phoneNumberId =
+1:           message.data?.phone_number_id ||
+1:           "";
+1: 
+1:         const businessId =
+1:           message.data?.business_id ||
+1:           "";
+1: 
+1:         if (
+1:           wabaId ||
+1:           phoneNumberId ||
+1:           businessId
+1:         ) {
+1:           signupDataRef.current = {
+1:             wabaId,
+1:             phoneNumberId,
+1:             businessId,
+1:           };
+1:         }
+1: 
+1:         if (
+1:           message.event === "CANCEL"
+1:         ) {
+1:           setConnecting(false);
+1: 
+1:           setConnectionMessage(
+1:             isArabic
+1:               ? "?? ????? ??? WhatsApp."
+1:               : "WhatsApp connection was cancelled."
+1:           );
+1: 
+1:           return;
+1:         }
+1: 
+1:         if (
+1:           message.event === "ERROR"
+1:         ) {
+1:           setConnecting(false);
+1: 
+1:           setConnectionMessage(
+1:             isArabic
+1:               ? "??? ??? ????? ??? WhatsApp."
+1:               : "An error occurred during WhatsApp connection."
+1:           );
+1: 
+1:           return;
+1:         }
+1: 
+1:         if (
+1:           message.event === "FINISH" ||
+1:           message.event ===
+1:             "FINISH_ONLY_WABA" ||
+1:           message.event ===
+1:             "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING"
+1:         ) {
+1:           if (codeRef.current) {
+1:             completeConnection();
+1:           }
+1:         }
+1:       } catch {
+1:         // Ignore unrelated Facebook messages.
+1:       }
+1:     }
+1: 
+1:     window.addEventListener(
+1:       "message",
+1:       handleSignupMessage
+1:     );
+1: 
+1:     return () => {
+1:       window.removeEventListener(
+1:         "message",
+1:         handleSignupMessage
+1:       );
+1: 
+1:       if (finishTimerRef.current) {
+1:         clearTimeout(
+1:           finishTimerRef.current
+1:         );
+1:       }
+1:     };
+1:   }, [isArabic]);
+1: 
+1:   function initializeFacebookSDK() {
+1:     if (
+1:       !window.FB ||
+1:       !metaAppId
+1:     ) {
+1:       return;
+1:     }
+1: 
+1:     window.FB.init({
+1:       appId: metaAppId,
+1:       cookie: true,
+1:       xfbml: true,
+1:       version: "v25.0",
+1:     });
+1: 
+1:     setSdkReady(true);
+1:   }
+1: 
+1:   function launchSignup() {
+1:     if (!window.FB) {
+1:       alert(
+1:         isArabic
+1:           ? "Meta ?? ??? ??????? ???. ???? ??? ????."
+1:           : "Meta is still loading. Please try again."
+1:       );
+1: 
+1:       return;
+1:     }
+1: 
+1:     if (
+1:       !metaAppId ||
+1:       !metaConfigId
+1:     ) {
+1:       alert(
+1:         isArabic
+1:           ? "????? Meta ??? ?????."
+1:           : "Meta configuration is incomplete."
+1:       );
+1: 
+1:       return;
+1:     }
+1: 
+1:     if (connecting) {
+1:       return;
+1:     }
+1: 
+1:     signupDataRef.current = null;
+1:     codeRef.current = null;
+1: 
+1:     setConnecting(true);
+1:     setConnectionMessage(
+1:       isArabic
+1:         ? "???? ??? WhatsApp..."
+1:         : "Opening WhatsApp connection..."
+1:     );
+1: 
+1:     window.FB.login(
+1:       (response) => {
+1:         const code =
+1:           response.authResponse?.code;
+1: 
+1:         if (!code) {
+1:           setConnecting(false);
+1: 
+1:           setConnectionMessage(
+1:             isArabic
+1:               ? "?? ????? ??? WhatsApp."
+1:               : "WhatsApp connection was not completed."
+1:           );
+1: 
+1:           return;
+1:         }
+1: 
+1:         codeRef.current = code;
+1: 
+1:         /*
+1:          * Meta's WA_EMBEDDED_SIGNUP event may
+1:          * arrive immediately before or after the
+1:          * FB.login callback.
+1:          *
+1:          * Wait briefly for that event if needed.
+1:          */
+1: 
+1:         if (
+1:           signupDataRef.current
+1:         ) {
+1:           completeConnection();
+1:           return;
+1:         }
+1: 
+1:         if (finishTimerRef.current) {
+1:           clearTimeout(
+1:             finishTimerRef.current
+1:           );
+1:         }
+1: 
+1:         finishTimerRef.current =
+1:           setTimeout(() => {
+1:             if (
+1:               signupDataRef.current &&
+1:               codeRef.current
+1:             ) {
+1:               completeConnection();
+1:             } else {
+1:               setConnecting(false);
+1: 
+1:               setConnectionMessage(
+1:                 isArabic
+1:                   ? "??? ????????? ??? ?? ??? ?????? WhatsApp. ???? ????? ??? ????."
+1:                   : "Authorization completed, but WhatsApp account details were not received. Please try again."
+1:               );
+1:             }
+1:           }, 1500);
+1:       },
+1:       {
+1:         config_id: metaConfigId,
+1:         response_type: "code",
+1:         override_default_response_type:
+1:           true,
+1:         auth_type: "rerequest",
+1:         extras: {
+1:           setup: {},
+1:         },
+1:       }
+1:     );
+1:   }
+1: 
+1:   const total = recipients.length;
+1: 
+1:   const sent = recipients.filter(
+1:     (item) =>
+1:       item.status === "sent" ||
+1:       item.status === "delivered" ||
+1:       item.status === "read"
+1:   ).length;
+1: 
+1:   const delivered = recipients.filter(
+1:     (item) =>
+1:       item.status === "delivered" ||
+1:       item.status === "read"
+1:   ).length;
+1: 
+1:   const read = recipients.filter(
+1:     (item) =>
+1:       item.status === "read"
+1:   ).length;
+1: 
+1:   const failed = recipients.filter(
+1:     (item) =>
+1:       item.status === "failed"
+1:   ).length;
+1: 
+1:   if (loading) {
+1:     return (
+1:       <>
+1:         <Script
+1:           src="https://connect.facebook.net/en_US/sdk.js"
+1:           strategy="afterInteractive"
+1:           onLoad={
+1:             initializeFacebookSDK
+1:           }
+1:         />
+1: 
+1:         <AppShell
+1:           title="WhatsApp"
+1:           titleKey="whatsappTitle"
+1:         >
+1:           <div className="rounded-2xl border border-slate-200 bg-white p-8 text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
+1:             {isArabic
+1:               ? "???? ????? WhatsApp..."
+1:               : "Loading WhatsApp..."}
+1:           </div>
+1:         </AppShell>
+1:       </>
+1:     );
+1:   }
+1: 
+1:   if (error) {
+1:     return (
+1:       <>
+1:         <Script
+1:           src="https://connect.facebook.net/en_US/sdk.js"
+1:           strategy="afterInteractive"
+1:           onLoad={
+1:             initializeFacebookSDK
+1:           }
+1:         />
+1: 
+1:         <AppShell
+1:           title="WhatsApp"
+1:           titleKey="whatsappTitle"
+1:         >
+1:           <div className="rounded-2xl border border-red-200 bg-red-50 p-6 text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300">
+1:             {error}
+1:           </div>
+1:         </AppShell>
+1:       </>
+1:     );
+1:   }
+1: 
+1:   return (
+1:     <>
+1:       <Script
+1:         src="https://connect.facebook.net/en_US/sdk.js"
+1:         strategy="afterInteractive"
+1:         onLoad={
+1:           initializeFacebookSDK
+1:         }
+1:       />
+1: 
+1:       <AppShell
+1:         title="WhatsApp"
+1:         titleKey="whatsappTitle"
+1:       >
+1:         <div
+1:           dir={
+1:             isArabic ? "rtl" : "ltr"
+1:           }
+1:           className="space-y-6"
+1:         >
+1:           <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+1:             <div className="p-8">
+1:               <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
+1:                 <div className="max-w-2xl">
+1:                   <div className="mb-4 inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40 dark:text-emerald-400">
+1:                     <svg
+1:                       className="h-7 w-7"
+1:                       viewBox="0 0 24 24"
+1:                       fill="none"
+1:                       stroke="currentColor"
+1:                       strokeWidth="1.8"
+1:                     >
+1:                       <path d="M20 11.5a8 8 0 0 1-11.8 7L4 20l1.5-4A8 8 0 1 1 20 11.5Z" />
+1:                       <path d="M9 8.5c.3-.4.7-.4 1-.1l1 1c.3.3.3.7 0 1l-.5.5c.8 1.4 1.8 2.3 3.2 3l.5-.5c.3-.3.7-.3 1 0l1 1c.3.3.3.8-.1 1.1-.5.5-1.1.7-1.8.5-2.1-.5-5.2-3.6-5.7-5.7-.2-.7 0-1.3.4-1.8Z" />
+1:                     </svg>
+1:                   </div>
+1: 
+1:                   <div className="flex flex-wrap items-center gap-3">
+1:                     <h2 className="text-2xl font-bold text-slate-900 dark:text-white">
+1:                       {isArabic
+1:                         ? "???? WhatsApp ??????"
+1:                         : "Connect WhatsApp to your restaurant"}
+1:                     </h2>
+1: 
+1:                     <span className="inline-flex items-center gap-2 rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
+1:                       <span className="h-2 w-2 rounded-full bg-amber-500" />
+1: 
+1:                       {sdkReady
+1:                         ? isArabic
+1:                           ? "???? ?????"
+1:                           : "Ready to connect"
+1:                         : isArabic
+1:                           ? "???? ???????"
+1:                           : "Loading"}
+1:                     </span>
+1:                   </div>
+1: 
+1:                   <p className="mt-3 text-sm leading-6 text-slate-500 dark:text-slate-400">
+1:                     {isArabic
+1:                       ? "???? ???? WhatsApp Business ????? ?????? ???? ????? ?? ??????? ?????."
+1:                       : "Connect your restaurant's WhatsApp Business account without entering technical settings."}
+1:                   </p>
+1: 
+1:                   {connectionMessage && (
+1:                     <div className="mt-4 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-medium text-blue-700 dark:border-blue-900/50 dark:bg-blue-950/30 dark:text-blue-300">
+1:                       {connectionMessage}
+1:                     </div>
+1:                   )}
+1:                 </div>
+1: 
+1:                 <button
+1:                   type="button"
+1:                   onClick={
+1:                     launchSignup
+1:                   }
+1:                   disabled={
+1:                     !sdkReady ||
+1:                     connecting
+1:                   }
+1:                   className="inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-6 py-4 text-sm font-bold text-white shadow-sm transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+1:                 >
+1:                   <svg
+1:                     className="h-5 w-5"
+1:                     viewBox="0 0 24 24"
+1:                     fill="none"
+1:                     stroke="currentColor"
+1:                     strokeWidth="1.8"
+1:                   >
+1:                     <path d="M12 16V4M7 9l5-5 5 5" />
+1:                     <path d="M5 13v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5" />
+1:                   </svg>
+1: 
+1:                   {connecting
+1:                     ? isArabic
+1:                       ? "???? ?????..."
+1:                       : "Connecting..."
+1:                     : isArabic
+1:                       ? "???? WhatsApp"
+1:                       : "Connect WhatsApp"}
+1:                 </button>
+1:               </div>
+1: 
+1:               <div className="mt-8 grid gap-4 md:grid-cols-3">
+1:                 <div className="rounded-2xl bg-slate-50 p-5 dark:bg-slate-950">
+1:                   <div className="text-sm font-semibold text-slate-900 dark:text-white">
+1:                     1.{" "}
+1:                     {isArabic
+1:                       ? "????? ?????"
+1:                       : "Choose your account"}
+1:                   </div>
+1: 
+1:                   <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">
+1:                     {isArabic
+1:                       ? "???? ?????? ????? Meta ????? ?????."
+1:                       : "Sign in with the Meta account for your business."}
+1:                   </p>
+1:                 </div>
+1: 
+1:                 <div className="rounded-2xl bg-slate-50 p-5 dark:bg-slate-950">
+1:                   <div className="text-sm font-semibold text-slate-900 dark:text-white">
+1:                     2.{" "}
+1:                     {isArabic
+1:                       ? "????? WhatsApp"
+1:                       : "Choose WhatsApp"}
+1:                   </div>
+1: 
+1:                   <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">
+1:                     {isArabic
+1:                       ? "????? ???? WhatsApp Business ???? ??????."
+1:                       : "Choose your restaurant's WhatsApp Business account and number."}
+1:                   </p>
+1:                 </div>
+1: 
+1:                 <div className="rounded-2xl bg-slate-50 p-5 dark:bg-slate-950">
+1:                   <div className="text-sm font-semibold text-slate-900 dark:text-white">
+1:                     3.{" "}
+1:                     {isArabic
+1:                       ? "???? ?????????"
+1:                       : "You're ready"}
+1:                   </div>
+1: 
+1:                   <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">
+1:                     {isArabic
+1:                       ? "???? ????? ??????? ?? ???? ??????."
+1:                       : "Start sending campaigns from inside the app."}
+1:                   </p>
+1:                 </div>
+1:               </div>
+1:             </div>
+1:           </section>
+1: 
+1:           <section className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
+1:             <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
+1:               <p className="text-sm text-slate-500 dark:text-slate-400">
+1:                 {isArabic
+1:                   ? "?????? ???????"
+1:                   : "Total messages"}
+1:               </p>
+1: 
+1:               <p className="mt-2 text-3xl font-bold text-slate-900 dark:text-white">
+1:                 {total}
+1:               </p>
+1:             </div>
+1: 
+1:             <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
+1:               <p className="text-sm text-slate-500 dark:text-slate-400">
+1:                 {isArabic
+1:                   ? "?? ???????"
+1:                   : "Sent"}
+1:               </p>
+1: 
+1:               <p className="mt-2 text-3xl font-bold text-blue-600 dark:text-blue-400">
+1:                 {sent}
+1:               </p>
+1:             </div>
+1: 
+1:             <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
+1:               <p className="text-sm text-slate-500 dark:text-slate-400">
+1:                 {isArabic
+1:                   ? "?? ???????"
+1:                   : "Delivered"}
+1:               </p>
+1: 
+1:               <p className="mt-2 text-3xl font-bold text-emerald-600 dark:text-emerald-400">
+1:                 {delivered}
+1:               </p>
+1:             </div>
+1: 
+1:             <div className="rounded-2xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900">
+1:               <p className="text-sm text-slate-500 dark:text-slate-400">
+1:                 {isArabic
+1:                   ? "??? ???????"
+1:                   : "Read"}
+1:               </p>
+1: 
+1:               <p className="mt-2 text-3xl font-bold text-purple-600 dark:text-purple-400">
+1:                 {read}
+1:               </p>
+1: 
+1:               {failed > 0 && (
+1:                 <p className="mt-2 text-xs font-semibold text-red-600 dark:text-red-400">
+1:                   {failed}{" "}
+1:                   {isArabic
+1:                     ? "????? ?????"
+1:                     : "failed messages"}
+1:                 </p>
+1:               )}
+1:             </div>
+1:           </section>
+1: 
+1:           <section className="rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+1:             <button
+1:               type="button"
+1:               onClick={() =>
+1:                 setAdvancedOpen(
+1:                   (value) => !value
+1:                 )
+1:               }
+1:               className="flex w-full items-center justify-between p-6 text-left"
+1:             >
+1:               <div>
+1:                 <h3 className="font-bold text-slate-900 dark:text-white">
+1:                   {isArabic
+1:                     ? "????????? ????????"
+1:                     : "Advanced settings"}
+1:                 </h3>
+1: 
+1:                 <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+1:                   {isArabic
+1:                     ? "?????????? ????????? ???."
+1:                     : "For advanced users only."}
+1:                 </p>
+1:               </div>
+1: 
+1:               <span className="text-slate-400">
+1:                 {advancedOpen
+1:                   ? "-"
+1:                   : "+"}
+1:               </span>
+1:             </button>
+1: 
+1:             {advancedOpen && (
+1:               <div className="border-t border-slate-200 p-6 dark:border-slate-800">
+1:                 <div className="rounded-2xl bg-slate-50 p-5 dark:bg-slate-950">
+1:                   <p className="text-sm leading-6 text-slate-600 dark:text-slate-300">
+1:                     {isArabic
+1:                       ? "?????? Meta ?Webhooks ?????????? ??????? ??? ????? ?? ???????? ??????."
+1:                       : "Meta, webhook, and technical connection details should remain hidden from normal users."}
+1:                   </p>
+1:                 </div>
+1:               </div>
+1:             )}
+1:           </section>
+1:         </div>
+1:       </AppShell>
+1:     </>
+1:   );
+1: }
+1: 
+1: 

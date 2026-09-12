@@ -1,0 +1,1235 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { useParams, useRouter } from "next/navigation";
+import { AppShell } from "@/components/app-shell";
+import CustomerIntelligence from "@/components/customer-intelligence";
+import { createClient } from "@/lib/supabase/client";
+
+type Customer = {
+  id: string;
+  restaurant_id: string;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  total_orders: number | null;
+  total_spent: number | null;
+  last_order_at: string | null;
+};
+
+type Order = {
+  id: string;
+  order_number: string;
+  total: number;
+  currency_code: string | null;
+  status: string;
+  created_at: string;
+};
+function getRevenueByCurrency(orders: Order[]) {
+  const totals: Record<string, number> = {};
+
+  for (const order of orders) {
+    const currency = order.currency_code || "EGP";
+    totals[currency] = (totals[currency] || 0) + Number(order.total || 0);
+  }
+
+  return Object.entries(totals).sort((a, b) => b[1] - a[1]);
+}
+
+function formatCurrencyValue(amount: number, currency: string) {
+  return `${amount.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })} ${currency}`;
+}
+
+export default function CustomerProfilePage() {
+  const params = useParams();
+  const router = useRouter();
+
+  const customerId = String(params.id);
+
+  const [customer, setCustomer] =
+    useState<Customer | null>(null);
+
+  const [orders, setOrders] =
+    useState<Order[]>([]);
+  const revenueByCurrency = getRevenueByCurrency(orders);
+
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const [showEditForm, setShowEditForm] =
+    useState(false);
+
+  const [showOrderForm, setShowOrderForm] =
+    useState(false);
+
+  const [editName, setEditName] = useState("");
+  const [editEmail, setEditEmail] = useState("");
+  const [editPhone, setEditPhone] = useState("");
+
+  const [orderTotal, setOrderTotal] = useState("");
+  const [orderStatus, setOrderStatus] =
+    useState("completed");
+
+  async function getRestaurantId(
+    supabase: ReturnType<typeof createClient>
+  ) {
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      throw new Error("You are not logged in.");
+    }
+
+    const {
+      data: restaurant,
+      error: restaurantError,
+    } = await supabase
+      .from("restaurants")
+      .select("id")
+      .eq("owner_id", user.id)
+      .single();
+
+    if (restaurantError || !restaurant) {
+      throw new Error(
+        restaurantError?.message ||
+          "Restaurant not found."
+      );
+    }
+
+    return restaurant.id;
+  }
+
+  async function loadCustomer() {
+    try {
+      setLoading(true);
+      setError("");
+
+      const supabase = createClient();
+
+      const restaurantId =
+        await getRestaurantId(supabase);
+
+      const {
+        data: customerData,
+        error: customerError,
+      } = await supabase
+        .from("customers")
+        .select(`
+          id,
+          restaurant_id,
+          name,
+          email,
+          phone,
+          total_orders,
+          total_spent,
+          last_order_at
+        `)
+        .eq("id", customerId)
+        .eq("restaurant_id", restaurantId)
+        .single();
+
+      if (customerError || !customerData) {
+        throw new Error(
+          customerError?.message ||
+            "Customer not found."
+        );
+      }
+
+      setCustomer(customerData);
+
+      const {
+        data: ordersData,
+        error: ordersError,
+      } = await supabase
+        .from("orders")
+        .select(`
+          id,
+          order_number,
+          total,
+          currency_code,
+          status,
+          created_at
+        `)
+        .eq("restaurant_id", restaurantId)
+        .eq("customer_id", customerId)
+        .order("created_at", {
+          ascending: false,
+        });
+
+      if (ordersError) {
+        throw new Error(
+          ordersError.message
+        );
+      }
+
+      setOrders(ordersData || []);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Something went wrong."
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (customerId) {
+      loadCustomer();
+    }
+  }, [customerId]);
+
+  const stats = useMemo(() => {
+    const totalOrders = orders.length;
+
+    const totalSpent = orders.reduce(
+      (sum, order) =>
+        sum + Number(order.total || 0),
+      0
+    );
+
+    const averageOrder =
+      totalOrders > 0
+        ? totalSpent / totalOrders
+        : 0;
+
+    const completedOrders = orders.filter(
+      (order) => order.status === "completed"
+    ).length;
+
+    const cancelledOrders = orders.filter(
+      (order) => order.status === "cancelled"
+    ).length;
+
+    return {
+      totalOrders,
+      totalSpent,
+      averageOrder,
+      completedOrders,
+      cancelledOrders,
+    };
+  }, [orders]);
+
+  const segment = useMemo(() => {
+    if (
+      stats.totalSpent >= 500 ||
+      stats.totalOrders >= 5
+    ) {
+      return {
+        name: "VIP",
+        description: "High-value customer",
+        className:
+          "bg-purple-100 text-purple-700",
+      };
+    }
+
+    if (stats.totalOrders > 1) {
+      return {
+        name: "Regular",
+        description: "Returning customer",
+        className:
+          "bg-blue-100 text-blue-700",
+      };
+    }
+
+    return {
+      name: "New",
+      description: "New customer",
+      className:
+        "bg-green-100 text-green-700",
+    };
+  }, [stats.totalOrders, stats.totalSpent]);
+
+  function openEditForm() {
+    if (!customer) return;
+
+    setEditName(customer.name || "");
+    setEditEmail(customer.email || "");
+    setEditPhone(customer.phone || "");
+
+    setShowEditForm(true);
+    setShowOrderForm(false);
+  }
+
+  function closeEditForm() {
+    if (saving) return;
+
+    setShowEditForm(false);
+  }
+
+  async function saveCustomer() {
+    if (!editName.trim()) {
+      alert("Please enter customer name.");
+      return;
+    }
+
+    try {
+      setSaving(true);
+
+      const supabase = createClient();
+
+      const restaurantId =
+        await getRestaurantId(supabase);
+
+      const { error: updateError } =
+        await supabase
+          .from("customers")
+          .update({
+            name: editName.trim(),
+            email:
+              editEmail.trim() || null,
+            phone:
+              editPhone.trim() || null,
+          })
+          .eq("id", customerId)
+          .eq("restaurant_id", restaurantId);
+
+      if (updateError) {
+        throw new Error(
+          updateError.message
+        );
+      }
+
+      setShowEditForm(false);
+
+      await loadCustomer();
+    } catch (err) {
+      alert(
+        err instanceof Error
+          ? err.message
+          : "Something went wrong while updating customer."
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function openOrderForm() {
+    setOrderTotal("");
+    setOrderStatus("completed");
+
+    setShowOrderForm(true);
+    setShowEditForm(false);
+  }
+
+  function closeOrderForm() {
+    if (saving) return;
+
+    setShowOrderForm(false);
+  }
+
+  async function updateCustomerStats(
+    supabase: ReturnType<typeof createClient>,
+    restaurantId: string
+  ) {
+    const {
+      data: customerOrders,
+      error: ordersError,
+    } = await supabase
+      .from("orders")
+      .select("total, created_at")
+      .eq("restaurant_id", restaurantId)
+      .eq("customer_id", customerId)
+      .order("created_at", {
+        ascending: false,
+      });
+
+    if (ordersError) {
+      throw new Error(
+        ordersError.message
+      );
+    }
+
+    const list = customerOrders || [];
+
+    const totalOrders = list.length;
+
+    const totalSpent = list.reduce(
+      (sum, order) =>
+        sum + Number(order.total || 0),
+      0
+    );
+
+    const lastOrderAt =
+      list.length > 0
+        ? list[0].created_at
+        : null;
+
+    const { error: updateError } =
+      await supabase
+        .from("customers")
+        .update({
+          total_orders: totalOrders,
+          total_spent: totalSpent,
+          last_order_at: lastOrderAt,
+        })
+        .eq("id", customerId)
+        .eq("restaurant_id", restaurantId);
+
+    if (updateError) {
+      throw new Error(
+        updateError.message
+      );
+    }
+  }
+
+  async function addOrder() {
+    if (!orderTotal || Number(orderTotal) <= 0) {
+      alert("Please enter a valid order total.");
+      return;
+    }
+
+    try {
+      setSaving(true);
+
+      const supabase = createClient();
+
+      const restaurantId =
+        await getRestaurantId(supabase);
+
+      const orderNumber =
+        "ORD-" +
+        Math.floor(
+          100000 + Math.random() * 900000
+        );
+
+      const { error: insertError } =
+        await supabase
+          .from("orders")
+          .insert({
+            restaurant_id: restaurantId,
+            customer_id: customerId,
+            order_number: orderNumber,
+            total: Number(orderTotal),
+            status: orderStatus,
+          });
+
+      if (insertError) {
+        throw new Error(
+          insertError.message
+        );
+      }
+
+      await updateCustomerStats(
+        supabase,
+        restaurantId
+      );
+
+      setShowOrderForm(false);
+      setOrderTotal("");
+      setOrderStatus("completed");
+
+      await loadCustomer();
+    } catch (err) {
+      alert(
+        err instanceof Error
+          ? err.message
+          : "Something went wrong while creating the order."
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function getStatusClass(status: string) {
+    switch (status) {
+      case "completed":
+        return "bg-green-100 text-green-700";
+
+      case "processing":
+        return "bg-blue-100 text-blue-700";
+
+      case "pending":
+        return "bg-yellow-100 text-yellow-700";
+
+      case "cancelled":
+        return "bg-red-100 text-red-700";
+
+      default:
+        return "bg-gray-100 text-gray-700";
+    }
+  }
+
+  function formatStatus(status: string) {
+    if (!status) return "Unknown";
+
+    return status.charAt(0).toUpperCase() +
+      status.slice(1);
+  }
+
+  if (loading) {
+    return (
+      <AppShell title="Customer Profile">
+        <div className="rounded-2xl border bg-white p-6 text-gray-500 shadow-sm">
+          Loading customer...
+        </div>
+      </AppShell>
+    );
+  }
+
+  if (error || !customer) {
+    return (
+      <AppShell title="Customer Profile">
+        <div className="rounded-2xl border border-red-200 bg-red-50 p-6 text-red-600">
+          <p>
+            <strong>Error:</strong>{" "}
+            {error || "Customer not found."}
+          </p>
+
+          <button
+            onClick={() =>
+              router.push("/customers")
+            }
+            className="mt-4 rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"
+          >
+            Back to Customers
+          </button>
+        </div>
+      </AppShell>
+    );
+  }
+
+  return (
+    <AppShell title="Customer Profile">
+      <div className="space-y-6">
+        <CustomerIntelligence
+          customer={customer}
+          orders={orders}
+        />
+
+
+        {/* Top actions */}
+
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+
+          <button
+            onClick={() =>
+              router.push("/customers")
+            }
+            className="text-sm font-medium text-blue-600 hover:text-blue-700"
+          >
+            ← Back to Customers
+          </button>
+
+          <div className="flex gap-3">
+
+            <button
+              onClick={openEditForm}
+              className="rounded-lg border bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+            >
+              Edit Customer
+            </button>
+
+            <button
+              onClick={openOrderForm}
+              className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+            >
+              + Add Order
+            </button>
+
+          </div>
+
+        </div>
+
+
+        {/* Customer Header */}
+
+        <div className="rounded-2xl border bg-white p-6 shadow-sm">
+
+          <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
+
+            <div className="flex items-center gap-4">
+
+              <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-full bg-blue-100 text-2xl font-bold text-blue-600">
+                {customer.name
+                  .charAt(0)
+                  .toUpperCase()}
+              </div>
+
+              <div>
+
+                <div className="flex flex-wrap items-center gap-3">
+
+                  <h2 className="text-2xl font-bold text-gray-900">
+                    {customer.name}
+                  </h2>
+
+                  <span
+                    className={`rounded-full px-3 py-1 text-xs font-semibold ${segment.className}`}
+                  >
+                    {segment.name}
+                  </span>
+
+                </div>
+
+                <p className="mt-2 text-sm text-gray-500">
+                  {segment.description}
+                </p>
+
+                <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-sm text-gray-500">
+
+                  <span>
+                    {customer.email ||
+                      "No email"}
+                  </span>
+
+                  <span>
+                    {customer.phone ||
+                      "No phone"}
+                  </span>
+
+                </div>
+
+              </div>
+
+            </div>
+
+
+            <div className="rounded-xl bg-gray-50 px-5 py-4 md:min-w-[180px]">
+
+              <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
+                Customer Since
+              </p>
+
+              <p className="mt-1 font-semibold text-gray-900">
+                Active Customer
+              </p>
+
+              <p className="mt-1 text-sm text-gray-500">
+                {stats.totalOrders} total orders
+              </p>
+
+            </div>
+
+          </div>
+
+        </div>
+
+
+        {/* Edit Form */}
+
+        {showEditForm && (
+          <div className="rounded-2xl border bg-white p-6 shadow-sm">
+
+            <div className="mb-5 flex items-center justify-between">
+
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">
+                  Edit Customer
+                </h3>
+
+                <p className="mt-1 text-sm text-gray-500">
+                  Update customer contact information.
+                </p>
+              </div>
+
+              <button
+                onClick={closeEditForm}
+                disabled={saving}
+                className="text-gray-500 hover:text-gray-900"
+              >
+                ✕
+              </button>
+
+            </div>
+
+
+            <div className="grid gap-4 md:grid-cols-3">
+
+              <div>
+
+                <label className="mb-2 block text-sm font-medium text-gray-700">
+                  Name
+                </label>
+
+                <input
+                  type="text"
+                  value={editName}
+                  onChange={(e) =>
+                    setEditName(e.target.value)
+                  }
+                  className="w-full rounded-lg border px-4 py-2 outline-none focus:border-blue-500"
+                />
+
+              </div>
+
+
+              <div>
+
+                <label className="mb-2 block text-sm font-medium text-gray-700">
+                  Email
+                </label>
+
+                <input
+                  type="email"
+                  value={editEmail}
+                  onChange={(e) =>
+                    setEditEmail(e.target.value)
+                  }
+                  className="w-full rounded-lg border px-4 py-2 outline-none focus:border-blue-500"
+                />
+
+              </div>
+
+
+              <div>
+
+                <label className="mb-2 block text-sm font-medium text-gray-700">
+                  Phone
+                </label>
+
+                <input
+                  type="text"
+                  value={editPhone}
+                  onChange={(e) =>
+                    setEditPhone(e.target.value)
+                  }
+                  className="w-full rounded-lg border px-4 py-2 outline-none focus:border-blue-500"
+                />
+
+              </div>
+
+            </div>
+
+
+            <div className="mt-5 flex gap-3">
+
+              <button
+                onClick={saveCustomer}
+                disabled={saving}
+                className="rounded-lg bg-blue-600 px-5 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                {saving
+                  ? "Saving..."
+                  : "Save Changes"}
+              </button>
+
+              <button
+                onClick={closeEditForm}
+                disabled={saving}
+                className="rounded-lg border px-5 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+
+            </div>
+
+          </div>
+        )}
+
+
+        {/* Add Order Form */}
+
+        {showOrderForm && (
+          <div className="rounded-2xl border bg-white p-6 shadow-sm">
+
+            <div className="mb-5 flex items-center justify-between">
+
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">
+                  Add Order
+                </h3>
+
+                <p className="mt-1 text-sm text-gray-500">
+                  Create a new order for {customer.name}.
+                </p>
+              </div>
+
+              <button
+                onClick={closeOrderForm}
+                disabled={saving}
+                className="text-gray-500 hover:text-gray-900"
+              >
+                ✕
+              </button>
+
+            </div>
+
+
+            <div className="grid gap-4 md:grid-cols-2">
+
+              <div>
+
+                <label className="mb-2 block text-sm font-medium text-gray-700">
+                  Order Total
+                </label>
+
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={orderTotal}
+                  onChange={(e) =>
+                    setOrderTotal(e.target.value)
+                  }
+                  placeholder="500"
+                  className="w-full rounded-lg border px-4 py-2 outline-none focus:border-blue-500"
+                />
+
+              </div>
+
+
+              <div>
+
+                <label className="mb-2 block text-sm font-medium text-gray-700">
+                  Status
+                </label>
+
+                <select
+                  value={orderStatus}
+                  onChange={(e) =>
+                    setOrderStatus(e.target.value)
+                  }
+                  className="w-full rounded-lg border px-4 py-2 outline-none focus:border-blue-500"
+                >
+
+                  <option value="completed">
+                    Completed
+                  </option>
+
+                  <option value="processing">
+                    Processing
+                  </option>
+
+                  <option value="pending">
+                    Pending
+                  </option>
+
+                  <option value="cancelled">
+                    Cancelled
+                  </option>
+
+                </select>
+
+              </div>
+
+            </div>
+
+
+            <div className="mt-5 flex gap-3">
+
+              <button
+                onClick={addOrder}
+                disabled={saving}
+                className="rounded-lg bg-blue-600 px-5 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                {saving
+                  ? "Saving..."
+                  : "Create Order"}
+              </button>
+
+              <button
+                onClick={closeOrderForm}
+                disabled={saving}
+                className="rounded-lg border px-5 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+
+            </div>
+
+          </div>
+        )}
+
+
+        {/* KPI Cards */}
+
+        <div className="grid gap-5 md:grid-cols-4">
+
+          <div className="rounded-2xl border bg-white p-6 shadow-sm">
+
+            <p className="text-sm text-gray-500">
+              Total Orders
+            </p>
+
+            <h3 className="mt-2 text-3xl font-bold text-blue-600">
+              {stats.totalOrders}
+            </h3>
+
+            <p className="mt-2 text-xs text-gray-400">
+              {stats.completedOrders} completed
+            </p>
+
+          </div>
+
+
+          <div className="rounded-2xl border bg-white p-6 shadow-sm">
+
+            <p className="text-sm text-gray-500">
+              Total Spent
+            </p>
+
+            <h3 className="mt-2 text-3xl font-bold text-green-600">
+              {revenueByCurrency.map(([currency, amount]) => (
+  <span key={currency} className="block">
+    {formatCurrencyValue(amount, currency)}
+  </span>
+))}
+            </h3>
+
+            <p className="mt-2 text-xs text-gray-400">
+              Lifetime value
+            </p>
+
+          </div>
+
+
+          <div className="rounded-2xl border bg-white p-6 shadow-sm">
+
+            <p className="text-sm text-gray-500">
+              Average Order
+            </p>
+
+            <h3 className="mt-2 text-3xl font-bold text-purple-600">
+              {revenueByCurrency.map(([currency, amount]) => {
+  const currencyOrders = orders.filter(
+    (order) => (order.currency_code || "EGP") === currency
+  );
+
+  const average =
+    currencyOrders.length > 0
+      ? amount / currencyOrders.length
+      : 0;
+
+  return (
+    <span key={currency} className="block">
+      {formatCurrencyValue(average, currency)}
+    </span>
+  );
+})}
+            </h3>
+
+            <p className="mt-2 text-xs text-gray-400">
+              Average ticket size
+            </p>
+
+          </div>
+
+
+          <div className="rounded-2xl border bg-white p-6 shadow-sm">
+
+            <p className="text-sm text-gray-500">
+              Last Order
+            </p>
+
+            <h3 className="mt-2 text-lg font-bold text-orange-600">
+              {customer.last_order_at
+                ? new Date(
+                    customer.last_order_at
+                  ).toLocaleDateString()
+                : "No orders"}
+            </h3>
+
+            <p className="mt-2 text-xs text-gray-400">
+              {stats.cancelledOrders} cancelled
+            </p>
+
+          </div>
+
+        </div>
+
+
+        {/* Customer Activity */}
+
+        <div className="rounded-2xl border bg-white p-6 shadow-sm">
+
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+
+            <div>
+
+              <h3 className="text-lg font-semibold text-gray-900">
+                Customer Activity
+              </h3>
+
+              <p className="mt-1 text-sm text-gray-500">
+                A quick view of this customer's relationship with your restaurant.
+              </p>
+
+            </div>
+
+
+            <div className="grid grid-cols-2 gap-6">
+
+              <div>
+
+                <p className="text-xs text-gray-500">
+                  Orders
+                </p>
+
+                <p className="mt-1 font-semibold text-gray-900">
+                  {stats.totalOrders}
+                </p>
+
+              </div>
+
+
+              <div>
+
+                <p className="text-xs text-gray-500">
+                  Lifetime Value
+                </p>
+
+                <p className="mt-1 font-semibold text-gray-900">
+                  {revenueByCurrency.map(([currency, amount]) => (
+  <span key={currency} className="block">
+    {formatCurrencyValue(amount, currency)}
+  </span>
+))}
+                </p>
+
+              </div>
+
+            </div>
+
+          </div>
+
+        </div>
+
+
+        {/* Timeline */}
+
+        <div className="rounded-2xl border bg-white p-6 shadow-sm">
+
+          <div className="mb-6">
+
+            <h3 className="text-lg font-semibold text-gray-900">
+              Customer Timeline
+            </h3>
+
+            <p className="mt-1 text-sm text-gray-500">
+              Recent customer activity.
+            </p>
+
+          </div>
+
+
+          {orders.length === 0 ? (
+
+            <div className="rounded-xl bg-gray-50 p-8 text-center">
+
+              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-blue-50 text-xl">
+                📭
+              </div>
+
+              <p className="mt-3 font-medium text-gray-900">
+                No activity yet
+              </p>
+
+              <p className="mt-1 text-sm text-gray-500">
+                Add the first order to start the customer timeline.
+              </p>
+
+            </div>
+
+          ) : (
+
+            <div className="space-y-5">
+
+              {orders.slice(0, 5).map((order) => (
+
+                <div
+                  key={order.id}
+                  className="flex gap-4"
+                >
+
+                  <div className="flex flex-col items-center">
+
+                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-50 text-lg">
+                      🛍️
+                    </div>
+
+                    <div className="mt-2 h-full w-px bg-gray-200" />
+
+                  </div>
+
+
+                  <div className="min-w-0 flex-1 pb-4">
+
+                    <div className="flex flex-col gap-1 md:flex-row md:items-center md:justify-between">
+
+                      <div>
+
+                        <p className="font-medium text-gray-900">
+                          Order {order.order_number}
+                        </p>
+
+                        <p className="mt-1 text-sm text-gray-500">
+                          Order placed for{" "}
+{Number(order.total || 0).toFixed(2)}{" "}
+{order.currency_code || "EGP"}
+                        </p>
+
+                      </div>
+
+
+                      <div className="text-left md:text-right">
+
+                        <span
+                          className={`rounded-full px-3 py-1 text-xs font-medium ${getStatusClass(
+                            order.status
+                          )}`}
+                        >
+                          {formatStatus(
+                            order.status
+                          )}
+                        </span>
+
+                        <p className="mt-2 text-xs text-gray-400">
+                          {new Date(
+                            order.created_at
+                          ).toLocaleDateString()}
+                        </p>
+
+                      </div>
+
+                    </div>
+
+                  </div>
+
+                </div>
+
+              ))}
+
+            </div>
+
+          )}
+
+        </div>
+
+
+        {/* Order History */}
+
+        <div className="overflow-hidden rounded-2xl border bg-white shadow-sm">
+
+          <div className="border-b p-6">
+
+            <h3 className="text-lg font-semibold text-gray-900">
+              Order History
+            </h3>
+
+            <p className="mt-1 text-sm text-gray-500">
+              All orders placed by this customer.
+            </p>
+
+          </div>
+
+
+          {orders.length === 0 ? (
+
+            <div className="p-10 text-center">
+
+              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-blue-50 text-2xl">
+                📦
+              </div>
+
+              <h4 className="mt-4 font-semibold text-gray-900">
+                No orders yet
+              </h4>
+
+              <p className="mt-1 text-sm text-gray-500">
+                This customer has not placed any orders yet.
+              </p>
+
+              <button
+                onClick={openOrderForm}
+                className="mt-5 rounded-lg bg-blue-600 px-5 py-2 text-sm font-medium text-white hover:bg-blue-700"
+              >
+                + Add First Order
+              </button>
+
+            </div>
+
+          ) : (
+
+            <div className="overflow-x-auto">
+
+              <table className="w-full text-left">
+
+                <thead className="border-b bg-gray-50 text-sm text-gray-500">
+
+                  <tr>
+
+                    <th className="px-6 py-4">
+                      Order
+                    </th>
+
+                    <th className="px-6 py-4">
+                      Total
+                    </th>
+
+                    <th className="px-6 py-4">
+                      Status
+                    </th>
+
+                    <th className="px-6 py-4">
+                      Date
+                    </th>
+
+                  </tr>
+
+                </thead>
+
+
+                <tbody>
+
+                  {orders.map((order) => (
+
+                    <tr
+                      key={order.id}
+                      className="border-b last:border-0 hover:bg-gray-50"
+                    >
+
+                      <td className="px-6 py-4 font-medium text-gray-900">
+                        {order.order_number}
+                      </td>
+
+                      <td className="px-6 py-4 font-medium text-gray-900">
+                        {Number(order.total || 0).toFixed(2)}{" "}
+{order.currency_code || "EGP"}
+                      </td>
+
+                      <td className="px-6 py-4">
+
+                        <span
+                          className={`rounded-full px-3 py-1 text-xs font-medium ${getStatusClass(
+                            order.status
+                          )}`}
+                        >
+                          {formatStatus(
+                            order.status
+                          )}
+                        </span>
+
+                      </td>
+
+                      <td className="px-6 py-4 text-gray-600">
+                        {new Date(
+                          order.created_at
+                        ).toLocaleDateString()}
+                      </td>
+
+                    </tr>
+
+                  ))}
+
+                </tbody>
+
+              </table>
+
+            </div>
+
+          )}
+
+        </div>
+
+      </div>
+    </AppShell>
+  );
+}
