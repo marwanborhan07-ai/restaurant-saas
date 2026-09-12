@@ -202,7 +202,7 @@ export default function RetentionPage() {
       return {
         name: "VIP",
         className:
-          "bg-purple-100 text-purple-700",
+          "bg-purple-100 text-purple-700 dark:bg-purple-500/15 dark:text-purple-300",
       };
     }
 
@@ -210,14 +210,14 @@ export default function RetentionPage() {
       return {
         name: "Returning",
         className:
-          "bg-blue-100 text-blue-700",
+          "bg-blue-100 text-blue-700 dark:bg-blue-500/15 dark:text-blue-300",
       };
     }
 
     return {
       name: "New",
       className:
-        "bg-green-100 text-green-700",
+        "bg-green-100 text-green-700 dark:bg-green-500/15 dark:text-green-300",
     };
   }
 
@@ -231,7 +231,7 @@ export default function RetentionPage() {
       return {
         label: "High Risk",
         className:
-          "bg-red-100 text-red-700",
+          "bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-300",
       };
     }
 
@@ -242,21 +242,21 @@ export default function RetentionPage() {
       return {
         label: "At Risk",
         className:
-          "bg-orange-100 text-orange-700",
+          "bg-orange-100 text-orange-700 dark:bg-orange-500/15 dark:text-orange-300",
       };
     }
 
     return {
       label: "Healthy",
       className:
-        "bg-green-100 text-green-700",
+        "bg-green-100 text-green-700 dark:bg-green-500/15 dark:text-green-300",
     };
   }
 
   if (loading) {
     return (
       <AppShell title="Retention">
-        <div className="rounded-2xl border bg-white p-6 text-gray-500 shadow-sm">
+        <div className="rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-500 shadow-sm dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400 sm:p-6">
           Loading retention data...
         </div>
       </AppShell>
@@ -266,7 +266,7 @@ export default function RetentionPage() {
   if (error) {
     return (
       <AppShell title="Retention">
-        <div className="rounded-2xl border border-red-200 bg-red-50 p-6 text-red-600">
+        <div className="rounded-2xl border border-red-200 bg-red-50 p-5 text-red-600 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300 sm:p-6">
           <strong>Error:</strong> {error}
         </div>
       </AppShell>
@@ -275,101 +275,92 @@ export default function RetentionPage() {
 
   return (
     <AppShell title="Retention">
-      <div className="space-y-6">
+      <div className="mx-auto w-full max-w-7xl space-y-5 sm:space-y-6">
 
         {/* Header */}
 
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-
-          <div>
-            <h2 className="text-xl font-semibold text-gray-900">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <h2 className="text-xl font-semibold text-slate-900 dark:text-white sm:text-2xl">
               Customer Retention
             </h2>
 
-            <p className="mt-1 text-sm text-gray-500">
+            <p className="mt-1 max-w-2xl text-sm leading-6 text-slate-500 dark:text-slate-400">
               Identify customers who need attention and discover growth opportunities.
             </p>
           </div>
 
           <button
+            type="button"
             onClick={loadRetentionData}
-            className="rounded-lg border bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+            className="inline-flex min-h-11 w-full shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50 active:scale-[0.98] dark:border-slate-800 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 sm:w-auto"
           >
             Refresh
           </button>
-
         </div>
 
 
         {/* KPI Cards */}
 
-        <div className="grid gap-5 md:grid-cols-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4 sm:gap-5">
 
-          <div className="rounded-2xl border bg-white p-6 shadow-sm">
-
-            <p className="text-sm text-gray-500">
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-6">
+            <p className="text-sm text-slate-500 dark:text-slate-400">
               At Risk
             </p>
 
-            <h3 className="mt-2 text-3xl font-bold text-orange-600">
+            <h3 className="mt-2 text-3xl font-bold text-orange-600 dark:text-orange-400">
               {segments.atRisk.length}
             </h3>
 
-            <p className="mt-2 text-xs text-gray-400">
+            <p className="mt-2 text-xs text-slate-400 dark:text-slate-500">
               30+ days inactive
             </p>
-
           </div>
 
 
-          <div className="rounded-2xl border bg-white p-6 shadow-sm">
-
-            <p className="text-sm text-gray-500">
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-6">
+            <p className="text-sm text-slate-500 dark:text-slate-400">
               VIP Customers
             </p>
 
-            <h3 className="mt-2 text-3xl font-bold text-purple-600">
+            <h3 className="mt-2 text-3xl font-bold text-purple-600 dark:text-purple-400">
               {segments.vip.length}
             </h3>
 
-            <p className="mt-2 text-xs text-gray-400">
+            <p className="mt-2 text-xs text-slate-400 dark:text-slate-500">
               High-value customers
             </p>
-
           </div>
 
 
-          <div className="rounded-2xl border bg-white p-6 shadow-sm">
-
-            <p className="text-sm text-gray-500">
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-6">
+            <p className="text-sm text-slate-500 dark:text-slate-400">
               New Customers
             </p>
 
-            <h3 className="mt-2 text-3xl font-bold text-green-600">
+            <h3 className="mt-2 text-3xl font-bold text-green-600 dark:text-green-400">
               {segments.newCustomers.length}
             </h3>
 
-            <p className="mt-2 text-xs text-gray-400">
+            <p className="mt-2 text-xs text-slate-400 dark:text-slate-500">
               0–1 orders
             </p>
-
           </div>
 
 
-          <div className="rounded-2xl border bg-white p-6 shadow-sm">
-
-            <p className="text-sm text-gray-500">
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-6">
+            <p className="text-sm text-slate-500 dark:text-slate-400">
               Returning
             </p>
 
-            <h3 className="mt-2 text-3xl font-bold text-blue-600">
+            <h3 className="mt-2 text-3xl font-bold text-blue-600 dark:text-blue-400">
               {segments.returning.length}
             </h3>
 
-            <p className="mt-2 text-xs text-gray-400">
+            <p className="mt-2 text-xs text-slate-400 dark:text-slate-500">
               Repeat customers
             </p>
-
           </div>
 
         </div>
@@ -377,34 +368,32 @@ export default function RetentionPage() {
 
         {/* Growth Opportunities */}
 
-        <div className="rounded-2xl border bg-white shadow-sm">
+        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
 
-          <div className="border-b p-6">
-
-            <h3 className="text-lg font-semibold text-gray-900">
+          <div className="border-b border-slate-200 p-5 dark:border-slate-800 sm:p-6">
+            <h3 className="text-base font-semibold text-slate-900 dark:text-white sm:text-lg">
               Customer Opportunities
             </h3>
 
-            <p className="mt-1 text-sm text-gray-500">
+            <p className="mt-1 text-sm leading-6 text-slate-500 dark:text-slate-400">
               Customers with the strongest opportunity for re-engagement.
             </p>
-
           </div>
 
 
           {opportunities.length === 0 ? (
 
-            <div className="p-10 text-center">
+            <div className="p-8 text-center sm:p-10">
 
-              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-green-50 text-2xl">
+              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-green-50 text-2xl dark:bg-green-500/10">
                 🎉
               </div>
 
-              <h4 className="mt-4 font-semibold text-gray-900">
+              <h4 className="mt-4 font-semibold text-slate-900 dark:text-white">
                 No at-risk customers
               </h4>
 
-              <p className="mt-1 text-sm text-gray-500">
+              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
                 Your current customer base looks healthy.
               </p>
 
@@ -412,144 +401,245 @@ export default function RetentionPage() {
 
           ) : (
 
-            <div className="overflow-x-auto">
+            <>
+              {/* Mobile cards */}
 
-              <table className="w-full text-left">
+              <div className="divide-y divide-slate-200 dark:divide-slate-800 md:hidden">
 
-                <thead className="border-b bg-gray-50 text-sm text-gray-500">
+                {opportunities.map((customer) => {
+                  const segment =
+                    getSegment(customer);
 
-                  <tr>
+                  const risk =
+                    getRiskLevel(customer);
 
-                    <th className="px-6 py-4">
-                      Customer
-                    </th>
+                  return (
+                    <div
+                      key={customer.id}
+                      className="p-5"
+                    >
+                      <div className="flex items-start justify-between gap-3">
 
-                    <th className="px-6 py-4">
-                      Segment
-                    </th>
+                        <div className="min-w-0">
+                          <a
+                            href={`/customers/${customer.id}`}
+                            className="block truncate font-semibold text-slate-900 hover:text-blue-600 dark:text-white dark:hover:text-blue-400"
+                          >
+                            {customer.name}
+                          </a>
 
-                    <th className="px-6 py-4">
-                      Orders
-                    </th>
+                          {customer.email && (
+                            <p className="mt-1 truncate text-xs text-slate-500 dark:text-slate-400">
+                              {customer.email}
+                            </p>
+                          )}
+                        </div>
 
-                    <th className="px-6 py-4">
-                      Lifetime Value
-                    </th>
-
-                    <th className="px-6 py-4">
-                      Last Order
-                    </th>
-
-                    <th className="px-6 py-4">
-                      Risk
-                    </th>
-
-                  </tr>
-
-                </thead>
-
-
-                <tbody>
-
-                  {opportunities.map(
-                    (customer) => {
-                      const segment =
-                        getSegment(customer);
-
-                      const risk =
-                        getRiskLevel(customer);
-
-                      return (
-                        <tr
-                          key={customer.id}
-                          className="border-b last:border-0 hover:bg-gray-50"
+                        <span
+                          className={`shrink-0 rounded-full px-3 py-1 text-xs font-medium ${risk.className}`}
                         >
+                          {risk.label}
+                        </span>
 
-                          <td className="px-6 py-4">
-
-                            <a
-                              href={`/customers/${customer.id}`}
-                              className="font-medium text-gray-900 hover:text-blue-600"
-                            >
-                              {customer.name}
-                            </a>
-
-                            {customer.email && (
-                              <p className="mt-1 text-xs text-gray-500">
-                                {customer.email}
-                              </p>
-                            )}
-
-                          </td>
+                      </div>
 
 
-                          <td className="px-6 py-4">
+                      <div className="mt-4 flex flex-wrap gap-2">
 
-                            <span
-                              className={`rounded-full px-3 py-1 text-xs font-medium ${segment.className}`}
-                            >
-                              {segment.name}
-                            </span>
+                        <span
+                          className={`rounded-full px-3 py-1 text-xs font-medium ${segment.className}`}
+                        >
+                          {segment.name}
+                        </span>
 
-                          </td>
+                        <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                          {Number(
+                            customer.total_orders || 0
+                          )} orders
+                        </span>
+
+                      </div>
 
 
-                          <td className="px-6 py-4 font-medium text-gray-900">
-                            {Number(
-                              customer.total_orders || 0
-                            )}
-                          </td>
+                      <div className="mt-4 grid grid-cols-2 gap-3">
 
+                        <div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-800/70">
+                          <p className="text-xs text-slate-500 dark:text-slate-400">
+                            Lifetime Value
+                          </p>
 
-                          <td className="px-6 py-4 font-medium text-gray-900">
+                          <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">
                             $
                             {Number(
                               customer.total_spent || 0
                             ).toFixed(2)}
-                          </td>
+                          </p>
+                        </div>
 
 
-                          <td className="px-6 py-4 text-gray-600">
+                        <div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-800/70">
+                          <p className="text-xs text-slate-500 dark:text-slate-400">
+                            Last Order
+                          </p>
 
-                            {customer.last_order_at
-                              ? new Date(
-                                  customer.last_order_at
-                                ).toLocaleDateString()
+                          <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">
+                            {customer.daysSinceLastOrder !== null
+                              ? `${customer.daysSinceLastOrder} days ago`
                               : "Never"}
+                          </p>
+                        </div>
 
-                            {customer.daysSinceLastOrder !==
-                              null && (
-                              <p className="mt-1 text-xs text-gray-400">
-                                {
-                                  customer.daysSinceLastOrder
-                                }{" "}
-                                days ago
-                              </p>
-                            )}
+                      </div>
 
-                          </td>
+                    </div>
+                  );
+                })}
+
+              </div>
 
 
-                          <td className="px-6 py-4">
+              {/* Desktop table */}
 
-                            <span
-                              className={`rounded-full px-3 py-1 text-xs font-medium ${risk.className}`}
-                            >
-                              {risk.label}
-                            </span>
+              <div className="hidden overflow-x-auto md:block">
 
-                          </td>
+                <table className="w-full min-w-[760px] text-left">
 
-                        </tr>
-                      );
-                    }
-                  )}
+                  <thead className="border-b border-slate-200 bg-slate-50 text-sm text-slate-500 dark:border-slate-800 dark:bg-slate-800/50 dark:text-slate-400">
 
-                </tbody>
+                    <tr>
 
-              </table>
+                      <th className="px-6 py-4 font-medium">
+                        Customer
+                      </th>
 
-            </div>
+                      <th className="px-6 py-4 font-medium">
+                        Segment
+                      </th>
+
+                      <th className="px-6 py-4 font-medium">
+                        Orders
+                      </th>
+
+                      <th className="px-6 py-4 font-medium">
+                        Lifetime Value
+                      </th>
+
+                      <th className="px-6 py-4 font-medium">
+                        Last Order
+                      </th>
+
+                      <th className="px-6 py-4 font-medium">
+                        Risk
+                      </th>
+
+                    </tr>
+
+                  </thead>
+
+
+                  <tbody>
+
+                    {opportunities.map(
+                      (customer) => {
+                        const segment =
+                          getSegment(customer);
+
+                        const risk =
+                          getRiskLevel(customer);
+
+                        return (
+                          <tr
+                            key={customer.id}
+                            className="border-b border-slate-200 transition last:border-0 hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-800/50"
+                          >
+
+                            <td className="px-6 py-4">
+
+                              <a
+                                href={`/customers/${customer.id}`}
+                                className="font-medium text-slate-900 hover:text-blue-600 dark:text-white dark:hover:text-blue-400"
+                              >
+                                {customer.name}
+                              </a>
+
+                              {customer.email && (
+                                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                                  {customer.email}
+                                </p>
+                              )}
+
+                            </td>
+
+
+                            <td className="px-6 py-4">
+
+                              <span
+                                className={`rounded-full px-3 py-1 text-xs font-medium ${segment.className}`}
+                              >
+                                {segment.name}
+                              </span>
+
+                            </td>
+
+
+                            <td className="px-6 py-4 font-medium text-slate-900 dark:text-white">
+                              {Number(
+                                customer.total_orders || 0
+                              )}
+                            </td>
+
+
+                            <td className="px-6 py-4 font-medium text-slate-900 dark:text-white">
+                              $
+                              {Number(
+                                customer.total_spent || 0
+                              ).toFixed(2)}
+                            </td>
+
+
+                            <td className="px-6 py-4 text-slate-600 dark:text-slate-300">
+
+                              {customer.last_order_at
+                                ? new Date(
+                                    customer.last_order_at
+                                  ).toLocaleDateString()
+                                : "Never"}
+
+                              {customer.daysSinceLastOrder !==
+                                null && (
+                                <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
+                                  {
+                                    customer.daysSinceLastOrder
+                                  }{" "}
+                                  days ago
+                                </p>
+                              )}
+
+                            </td>
+
+
+                            <td className="px-6 py-4">
+
+                              <span
+                                className={`rounded-full px-3 py-1 text-xs font-medium ${risk.className}`}
+                              >
+                                {risk.label}
+                              </span>
+
+                            </td>
+
+                          </tr>
+                        );
+                      }
+                    )}
+
+                  </tbody>
+
+                </table>
+
+              </div>
+
+            </>
 
           )}
 
@@ -558,101 +648,101 @@ export default function RetentionPage() {
 
         {/* Retention Segments */}
 
-        <div className="grid gap-5 md:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-3 sm:gap-5">
 
-          <div className="rounded-2xl border bg-white p-6 shadow-sm">
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-6">
 
-            <div className="flex items-center justify-between">
+            <div className="flex items-start justify-between gap-4">
 
-              <div>
+              <div className="min-w-0">
 
-                <h3 className="font-semibold text-gray-900">
+                <h3 className="font-semibold text-slate-900 dark:text-white">
                   VIP Customers
                 </h3>
 
-                <p className="mt-1 text-sm text-gray-500">
+                <p className="mt-1 text-sm leading-6 text-slate-500 dark:text-slate-400">
                   Highest-value customers.
                 </p>
 
               </div>
 
-              <div className="rounded-xl bg-purple-50 px-3 py-2 text-xl">
+              <div className="shrink-0 rounded-xl bg-purple-50 px-3 py-2 text-xl dark:bg-purple-500/10">
                 👑
               </div>
 
             </div>
 
-            <p className="mt-6 text-3xl font-bold text-purple-600">
+            <p className="mt-6 text-3xl font-bold text-purple-600 dark:text-purple-400">
               {segments.vip.length}
             </p>
 
-            <p className="mt-2 text-sm text-gray-500">
+            <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
               Customers to prioritize for loyalty.
             </p>
 
           </div>
 
 
-          <div className="rounded-2xl border bg-white p-6 shadow-sm">
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-6">
 
-            <div className="flex items-center justify-between">
+            <div className="flex items-start justify-between gap-4">
 
-              <div>
+              <div className="min-w-0">
 
-                <h3 className="font-semibold text-gray-900">
+                <h3 className="font-semibold text-slate-900 dark:text-white">
                   New Customers
                 </h3>
 
-                <p className="mt-1 text-sm text-gray-500">
+                <p className="mt-1 text-sm leading-6 text-slate-500 dark:text-slate-400">
                   Customers with one or fewer orders.
                 </p>
 
               </div>
 
-              <div className="rounded-xl bg-green-50 px-3 py-2 text-xl">
+              <div className="shrink-0 rounded-xl bg-green-50 px-3 py-2 text-xl dark:bg-green-500/10">
                 🌱
               </div>
 
             </div>
 
-            <p className="mt-6 text-3xl font-bold text-green-600">
+            <p className="mt-6 text-3xl font-bold text-green-600 dark:text-green-400">
               {segments.newCustomers.length}
             </p>
 
-            <p className="mt-2 text-sm text-gray-500">
+            <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
               Opportunity to drive the second order.
             </p>
 
           </div>
 
 
-          <div className="rounded-2xl border bg-white p-6 shadow-sm">
+          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-6">
 
-            <div className="flex items-center justify-between">
+            <div className="flex items-start justify-between gap-4">
 
-              <div>
+              <div className="min-w-0">
 
-                <h3 className="font-semibold text-gray-900">
+                <h3 className="font-semibold text-slate-900 dark:text-white">
                   Returning Customers
                 </h3>
 
-                <p className="mt-1 text-sm text-gray-500">
+                <p className="mt-1 text-sm leading-6 text-slate-500 dark:text-slate-400">
                   Customers already coming back.
                 </p>
 
               </div>
 
-              <div className="rounded-xl bg-blue-50 px-3 py-2 text-xl">
+              <div className="shrink-0 rounded-xl bg-blue-50 px-3 py-2 text-xl dark:bg-blue-500/10">
                 🔄
               </div>
 
             </div>
 
-            <p className="mt-6 text-3xl font-bold text-blue-600">
+            <p className="mt-6 text-3xl font-bold text-blue-600 dark:text-blue-400">
               {segments.returning.length}
             </p>
 
-            <p className="mt-2 text-sm text-gray-500">
+            <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
               Potential candidates for loyalty campaigns.
             </p>
 
@@ -663,15 +753,15 @@ export default function RetentionPage() {
 
         {/* At Risk Customers */}
 
-        <div className="rounded-2xl border bg-white shadow-sm">
+        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
 
-          <div className="border-b p-6">
+          <div className="border-b border-slate-200 p-5 dark:border-slate-800 sm:p-6">
 
-            <h3 className="text-lg font-semibold text-gray-900">
+            <h3 className="text-base font-semibold text-slate-900 dark:text-white sm:text-lg">
               At Risk Customers
             </h3>
 
-            <p className="mt-1 text-sm text-gray-500">
+            <p className="mt-1 text-sm leading-6 text-slate-500 dark:text-slate-400">
               Customers with no order for at least 30 days.
             </p>
 
@@ -680,17 +770,17 @@ export default function RetentionPage() {
 
           {segments.atRisk.length === 0 ? (
 
-            <div className="p-10 text-center">
+            <div className="p-8 text-center sm:p-10">
 
-              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-green-50 text-2xl">
+              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-green-50 text-2xl dark:bg-green-500/10">
                 ✅
               </div>
 
-              <h4 className="mt-4 font-semibold text-gray-900">
+              <h4 className="mt-4 font-semibold text-slate-900 dark:text-white">
                 No customers currently at risk
               </h4>
 
-              <p className="mt-1 text-sm text-gray-500">
+              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
                 Keep your customers engaged.
               </p>
 
@@ -698,25 +788,25 @@ export default function RetentionPage() {
 
           ) : (
 
-            <div className="divide-y">
+            <div className="divide-y divide-slate-200 dark:divide-slate-800">
 
               {segments.atRisk.map(
                 (customer) => (
                   <div
                     key={customer.id}
-                    className="flex flex-col gap-4 p-6 md:flex-row md:items-center md:justify-between"
+                    className="flex flex-col gap-4 p-5 sm:p-6 md:flex-row md:items-center md:justify-between"
                   >
 
-                    <div>
+                    <div className="min-w-0">
 
                       <a
                         href={`/customers/${customer.id}`}
-                        className="font-medium text-gray-900 hover:text-blue-600"
+                        className="block truncate font-semibold text-slate-900 hover:text-blue-600 dark:text-white dark:hover:text-blue-400"
                       >
                         {customer.name}
                       </a>
 
-                      <div className="mt-1 text-sm text-gray-500">
+                      <div className="mt-1 text-sm text-slate-500 dark:text-slate-400">
 
                         {Number(
                           customer.total_orders || 0
@@ -732,14 +822,14 @@ export default function RetentionPage() {
                     </div>
 
 
-                    <div className="flex items-center gap-3">
+                    <div className="flex flex-wrap items-center gap-2 md:justify-end">
 
-                      <span className="rounded-full bg-orange-100 px-3 py-1 text-xs font-medium text-orange-700">
+                      <span className="rounded-full bg-orange-100 px-3 py-1.5 text-xs font-medium text-orange-700 dark:bg-orange-500/15 dark:text-orange-300">
                         {customer.daysSinceLastOrder}{" "}
                         days inactive
                       </span>
 
-                      <span className="rounded-full bg-red-100 px-3 py-1 text-xs font-medium text-red-700">
+                      <span className="rounded-full bg-red-100 px-3 py-1.5 text-xs font-medium text-red-700 dark:bg-red-500/15 dark:text-red-300">
                         Needs attention
                       </span>
 
