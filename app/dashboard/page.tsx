@@ -1,90 +1,144 @@
 ﻿"use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/app-shell";
-import { useLanguage } from "@/components/language-context";
-import { createClient } from "@/lib/supabase/client";
+import { createClient } from "@/lib/supabase";
 
 type Customer = {
   id: string;
   name: string;
+  email: string | null;
+  phone: string | null;
   total_orders: number | null;
-  total_spent: number | null;
   last_order_at: string | null;
 };
 
 type Order = {
   id: string;
-  customer_id: string;
-  order_number: string;
+  customer_id: string | null;
   total: number;
   currency_code: string | null;
   status: string;
   created_at: string;
-  customers:
-    | {
-        name: string;
-      }
-    | null;
 };
 
-export default function DashboardPage() {
-  const { t, language } = useLanguage();
+type SegmentCustomer = Customer & {
+  ordersCount: number;
+  lastOrderAt: string | null;
+  daysSinceLastOrder: number | null;
+  revenueByCurrency: Record<string, number>;
+  maxSingleCurrencySpend: number;
+  topCurrency: string | null;
+  whatsappReady: boolean;
+};
 
-  const supabase = useMemo(() => createClient(), []);
+type SegmentKey =
+  | "vip"
+  | "repeat"
+  | "new"
+  | "at_risk"
+  | "lost"
+  | "high_spender"
+  | "whatsapp";
 
+function daysSince(date: string | null) {
+  if (!date) return null;
+
+  const now = new Date();
+  const target = new Date(date);
+
+  return Math.max(
+    0,
+    Math.floor(
+      (now.getTime() - target.getTime()) /
+        (1000 * 60 * 60 * 24)
+    )
+  );
+}
+
+function formatMoney(amount: number, currency: string) {
+  return `${amount.toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })} ${currency}`;
+}
+
+function getTopCurrency(
+  revenueByCurrency: Record<string, number>
+) {
+  const entries = Object.entries(revenueByCurrency);
+
+  if (entries.length === 0) {
+    return {
+      currency: null,
+      amount: 0,
+    };
+  }
+
+  entries.sort((a, b) => b[1] - a[1]);
+
+  return {
+    currency: entries[0][0],
+    amount: entries[0][1],
+  };
+}
+
+export default function SegmentsPage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
-  const [restaurantCurrency, setRestaurantCurrency] =
-    useState("EGP");
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [activeSegment, setActiveSegment] =
+    useState<SegmentKey>("vip");
 
-  useEffect(() => {
-    async function loadDashboard() {
+  async function loadData() {
+    try {
       setLoading(true);
+      setError("");
+
+      const supabase = createClient();
 
       const {
         data: { user },
+        error: userError,
       } = await supabase.auth.getUser();
 
-      if (!user) {
-        setLoading(false);
-        return;
+      if (userError || !user) {
+        throw new Error("You are not logged in.");
       }
 
-      const { data: restaurant } = await supabase
+      const {
+        data: restaurant,
+        error: restaurantError,
+      } = await supabase
         .from("restaurants")
-        .select("id,currency_code")
+        .select("id")
         .eq("owner_id", user.id)
         .single();
 
-      if (!restaurant) {
-        setLoading(false);
-        return;
+      if (restaurantError || !restaurant) {
+        throw new Error(
+          restaurantError?.message ||
+            "Restaurant not found."
+        );
       }
 
-      setRestaurantCurrency(
-        restaurant.currency_code || "EGP"
-      );
-
       const [
-        { data: customersData },
-        { data: ordersData },
+        { data: customersData, error: customersError },
+        { data: ordersData, error: ordersError },
       ] = await Promise.all([
         supabase
           .from("customers")
           .select(
-            "id,name,total_orders,total_spent,last_order_at"
+            "id,name,email,phone,total_orders,last_order_at"
           )
-          .eq("restaurant_id", restaurant.id)
-          .order("total_spent", {
-            ascending: false,
-          }),
+          .eq("restaurant_id", restaurant.id),
 
         supabase
           .from("orders")
           .select(
-            "id,customer_id,order_number,total,currency_code,status,created_at,customers(name)"
+            "id,customer_id,total,currency_code,status,created_at"
           )
           .eq("restaurant_id", restaurant.id)
           .order("created_at", {
@@ -92,487 +146,768 @@ export default function DashboardPage() {
           }),
       ]);
 
-      setCustomers(
-        (customersData || []) as Customer[]
+      if (customersError) {
+        throw new Error(customersError.message);
+      }
+
+      if (ordersError) {
+        throw new Error(ordersError.message);
+      }
+
+      setCustomers(customersData || []);
+      setOrders(ordersData || []);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Something went wrong while loading segments."
       );
-
-      const formattedOrders = (
-        ordersData || []
-      ).map((order) => ({
-        ...order,
-        customers: Array.isArray(order.customers)
-          ? order.customers[0] ?? null
-          : order.customers,
-      }));
-
-      setOrders(formattedOrders as Order[]);
+    } finally {
       setLoading(false);
     }
-
-    loadDashboard();
-  }, [supabase]);
-
-  const totalCustomers = customers.length;
-
-  const revenueByCurrency: Record<
-    string,
-    number
-  > = {};
-
-  const customerRevenue: Record<
-    string,
-    Record<string, number>
-  > = {};
-
-  const customerOrderCounts: Record<
-    string,
-    number
-  > = {};
-
-  orders.forEach((order) => {
-    const currencyCode =
-      order.currency_code ||
-      restaurantCurrency ||
-      "EGP";
-
-    const amount = Number(order.total || 0);
-
-    revenueByCurrency[currencyCode] =
-      (revenueByCurrency[currencyCode] || 0) +
-      amount;
-
-    customerOrderCounts[order.customer_id] =
-      (customerOrderCounts[order.customer_id] ||
-        0) + 1;
-
-    if (!customerRevenue[order.customer_id]) {
-      customerRevenue[order.customer_id] = {};
-    }
-
-    customerRevenue[order.customer_id][
-      currencyCode
-    ] =
-      (customerRevenue[order.customer_id][
-        currencyCode
-      ] || 0) + amount;
-  });
-
-  const vipCustomers = customers.filter(
-    (customer) => {
-      const spends =
-        customerRevenue[customer.id] || {};
-
-      const maxSpend =
-        Object.values(spends).length > 0
-          ? Math.max(...Object.values(spends))
-          : 0;
-
-      return (
-        maxSpend >= 500 ||
-        (customerOrderCounts[customer.id] || 0) >=
-          5
-      );
-    }
-  ).length;
-
-  const totalOrders = orders.length;
-
-  const topCustomers = [...customers]
-    .sort((a, b) => {
-      const aSpends = Object.values(
-        customerRevenue[a.id] || {}
-      );
-
-      const bSpends = Object.values(
-        customerRevenue[b.id] || {}
-      );
-
-      const aMaxSpend =
-        aSpends.length > 0
-          ? Math.max(...aSpends)
-          : 0;
-
-      const bMaxSpend =
-        bSpends.length > 0
-          ? Math.max(...bSpends)
-          : 0;
-
-      return bMaxSpend - aMaxSpend;
-    })
-    .slice(0, 5);
-
-  function translateStatus(status: string) {
-    const normalized = status.toLowerCase();
-
-    const keyMap: Record<string, string> = {
-      completed: "completed",
-      pending: "pending",
-      processing: "processing",
-      cancelled: "cancelled",
-      delivered: "delivered",
-      confirmed: "confirmed",
-    };
-
-    return t(keyMap[normalized] || status);
   }
 
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  const customerProfiles = useMemo(() => {
+    return customers.map((customer) => {
+      const customerOrders = orders.filter(
+        (order) =>
+          order.customer_id === customer.id
+      );
+
+      const revenueByCurrency: Record<
+        string,
+        number
+      > = {};
+
+      let lastOrderAt: string | null = null;
+
+      for (const order of customerOrders) {
+        const currency =
+          order.currency_code || "EGP";
+
+        revenueByCurrency[currency] =
+          (revenueByCurrency[currency] || 0) +
+          Number(order.total || 0);
+
+        if (
+          !lastOrderAt ||
+          new Date(order.created_at).getTime() >
+            new Date(lastOrderAt).getTime()
+        ) {
+          lastOrderAt = order.created_at;
+        }
+      }
+
+      const top = getTopCurrency(
+        revenueByCurrency
+      );
+
+      return {
+        ...customer,
+        ordersCount: customerOrders.length,
+        lastOrderAt,
+        daysSinceLastOrder:
+          daysSince(lastOrderAt),
+        revenueByCurrency,
+        maxSingleCurrencySpend: top.amount,
+        topCurrency: top.currency,
+        whatsappReady: Boolean(
+          customer.phone?.trim()
+        ),
+      } satisfies SegmentCustomer;
+    });
+  }, [customers, orders]);
+
+  const segments = useMemo(() => {
+    const vip = customerProfiles.filter(
+      (customer) =>
+        customer.ordersCount >= 5 ||
+        customer.maxSingleCurrencySpend >= 500
+    );
+
+    const repeat = customerProfiles.filter(
+      (customer) =>
+        customer.ordersCount >= 2 &&
+        customer.ordersCount < 5 &&
+        customer.maxSingleCurrencySpend < 500
+    );
+
+    const newCustomers = customerProfiles.filter(
+      (customer) =>
+        customer.ordersCount === 0 ||
+        customer.ordersCount === 1
+    );
+
+    const atRisk = customerProfiles.filter(
+      (customer) =>
+        customer.ordersCount > 0 &&
+        customer.daysSinceLastOrder !== null &&
+        customer.daysSinceLastOrder >= 30 &&
+        customer.daysSinceLastOrder < 60
+    );
+
+    const lost = customerProfiles.filter(
+      (customer) =>
+        customer.ordersCount > 0 &&
+        customer.daysSinceLastOrder !== null &&
+        customer.daysSinceLastOrder >= 60
+    );
+
+    const highSpenders = customerProfiles.filter(
+      (customer) =>
+        customer.maxSingleCurrencySpend >= 1000
+    );
+
+    const whatsapp = customerProfiles.filter(
+      (customer) =>
+        customer.whatsappReady
+    );
+
+    return {
+      vip,
+      repeat,
+      newCustomers,
+      atRisk,
+      lost,
+      highSpenders,
+      whatsapp,
+    };
+  }, [customerProfiles]);
+
+  const segmentConfig: Record<
+    SegmentKey,
+    {
+      title: string;
+      description: string;
+      icon: string;
+      customers: SegmentCustomer[];
+    }
+  > = {
+    vip: {
+      title: "VIP Customers",
+      description:
+        "Customers with strong frequency or high value.",
+      icon: "👑",
+      customers: segments.vip,
+    },
+
+    repeat: {
+      title: "Repeat Buyers",
+      description:
+        "Customers who already ordered more than once.",
+      icon: "🔁",
+      customers: segments.repeat,
+    },
+
+    new: {
+      title: "New Customers",
+      description:
+        "Customers with zero or one recorded order.",
+      icon: "🆕",
+      customers: segments.newCustomers,
+    },
+
+    at_risk: {
+      title: "At Risk",
+      description:
+        "Customers inactive for 30 to 59 days.",
+      icon: "⚠️",
+      customers: segments.atRisk,
+    },
+
+    lost: {
+      title: "Lost Customers",
+      description:
+        "Customers inactive for 60 days or more.",
+      icon: "💤",
+      customers: segments.lost,
+    },
+
+    high_spender: {
+      title: "High Spenders",
+      description:
+        "Customers spending at least 1,000 in one currency.",
+      icon: "💰",
+      customers: segments.highSpenders,
+    },
+
+    whatsapp: {
+      title: "WhatsApp Ready",
+      description:
+        "Customers with a phone number available for outreach.",
+      icon: "📱",
+      customers: segments.whatsapp,
+    },
+  };
+
+  const active = segmentConfig[activeSegment];
+
+  const sortedCustomers = [...active.customers].sort(
+    (a, b) =>
+      b.maxSingleCurrencySpend -
+      a.maxSingleCurrencySpend
+  );
+
   return (
-    <AppShell
-      title="Dashboard"
-      titleKey="dashboard"
-    >
-      {loading ? (
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 text-sm text-slate-600 shadow-sm sm:p-8 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
-          {t("loading")}
-        </div>
-      ) : (
-        <div className="space-y-5 sm:space-y-6 lg:space-y-8">
-          
-          {/* Overview */}
-          <div>
-            <h2 className="text-xl font-bold text-slate-900 sm:text-2xl dark:text-white">
-              {t("restaurantOverview")}
+    <AppShell title="Smart Segments">
+      <div className="mx-auto w-full max-w-7xl space-y-4 sm:space-y-6">
+
+        {/* HEADER */}
+
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+          <div className="min-w-0">
+            <p className="text-xs font-semibold uppercase tracking-wide text-blue-600 sm:text-sm">
+              Customer Intelligence
+            </p>
+
+            <h2 className="mt-1 text-2xl font-bold tracking-tight text-gray-900 dark:text-white sm:text-3xl">
+              Smart Segments
             </h2>
 
-            <p className="mt-1 text-sm text-slate-500 sm:mt-2 sm:text-base dark:text-slate-400">
-              {t("trackPerformance")}
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-gray-500 dark:text-gray-400">
+              Automatically organize customers by
+              behavior, value, recency, and
+              contactability.
             </p>
           </div>
 
-          {/* Stats */}
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-5 xl:grid-cols-4">
-            
-            {/* VIP Customers */}
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5 lg:p-6 dark:border-slate-800 dark:bg-slate-900">
-              <div className="flex items-center justify-between gap-3">
-                
-                <div className="min-w-0">
-                  <div className="text-xs text-slate-500 sm:text-sm dark:text-slate-400">
-                    {t("vipCustomers")}
-                  </div>
+          <button
+            onClick={loadData}
+            disabled={loading}
+            className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-sm font-semibold text-gray-700 shadow-sm transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800 sm:w-auto"
+          >
+            {loading ? "Refreshing..." : "Refresh"}
+          </button>
+        </div>
 
-                  <div className="mt-1 text-2xl font-bold text-orange-500 sm:mt-2 sm:text-3xl">
-                    {vipCustomers}
-                  </div>
-                </div>
+        {/* LOADING */}
 
-                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-orange-50 text-orange-500 sm:h-14 sm:w-14 sm:rounded-2xl dark:bg-orange-950/40">
-                  <svg
-                    className="h-6 w-6 sm:h-7 sm:w-7"
-                    viewBox="0 0 24 24"
-                    fill="currentColor"
+        {loading && (
+          <div className="rounded-2xl border border-gray-200 bg-white p-6 text-sm text-gray-500 shadow-sm dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400 sm:p-8">
+            Loading smart segments...
+          </div>
+        )}
+
+        {/* ERROR */}
+
+        {error && (
+          <div className="rounded-2xl border border-red-200 bg-red-50 p-5 text-sm text-red-700 sm:p-6">
+            <strong>Error:</strong> {error}
+          </div>
+        )}
+
+        {!loading && !error && (
+          <>
+
+            {/* SEGMENT CARDS */}
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-4">
+              {(Object.keys(
+                segmentConfig
+              ) as SegmentKey[]).map((key) => {
+                const item = segmentConfig[key];
+
+                const selected =
+                  activeSegment === key;
+
+                return (
+                  <button
+                    key={key}
+                    onClick={() =>
+                      setActiveSegment(key)
+                    }
+                    className={`min-w-0 rounded-2xl border p-4 text-left shadow-sm transition duration-200 hover:-translate-y-0.5 hover:shadow-md sm:p-5 ${
+                      selected
+                        ? "border-blue-400 bg-blue-50 ring-2 ring-blue-100 dark:border-blue-500 dark:bg-blue-950/30 dark:ring-blue-900/40"
+                        : "border-gray-200 bg-white hover:border-gray-300 dark:border-slate-800 dark:bg-slate-900 dark:hover:border-slate-700"
+                    }`}
                   >
-                    <path d="M5 8.5 7.5 5l3 2 1.5-3 1.5 3 3-2L19 8.5V19H5V8.5Z" />
-                    <path d="M8 12h8v2H8z" />
-                  </svg>
+                    <div className="flex items-start justify-between gap-3">
+                      <span className="text-2xl sm:text-3xl">
+                        {item.icon}
+                      </span>
+
+                      <span className="text-2xl font-bold text-gray-900 dark:text-white sm:text-3xl">
+                        {item.customers.length}
+                      </span>
+                    </div>
+
+                    <h3 className="mt-3 text-sm font-semibold text-gray-900 dark:text-white sm:mt-4 sm:text-base">
+                      {item.title}
+                    </h3>
+
+                    <p className="mt-1 line-clamp-2 text-xs leading-5 text-gray-500 dark:text-gray-400">
+                      {item.description}
+                    </p>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* ACTIVE SEGMENT */}
+
+            <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+
+              {/* ACTIVE HEADER */}
+
+              <div className="border-b border-gray-200 p-4 dark:border-slate-800 sm:p-6">
+
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+
+                  <div className="min-w-0">
+
+                    <div className="flex items-center gap-3">
+
+                      <span className="text-2xl sm:text-3xl">
+                        {active.icon}
+                      </span>
+
+                      <h3 className="truncate text-lg font-bold text-gray-900 dark:text-white sm:text-xl">
+                        {active.title}
+                      </h3>
+
+                    </div>
+
+                    <p className="mt-2 text-sm leading-6 text-gray-500 dark:text-gray-400">
+                      {active.description}
+                    </p>
+
+                  </div>
+
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+
+                    <div className="flex items-center justify-between rounded-xl bg-gray-50 px-4 py-3 dark:bg-slate-800 sm:block sm:min-w-[110px] sm:text-center">
+
+                      <p className="text-xs text-gray-500 dark:text-gray-400">
+                        Audience
+                      </p>
+
+                      <p className="text-xl font-bold text-gray-900 dark:text-white sm:mt-1 sm:text-2xl">
+                        {active.customers.length}
+                      </p>
+
+                    </div>
+
+                    {(activeSegment === "vip" ||
+                      activeSegment === "repeat" ||
+                      activeSegment === "new" ||
+                      activeSegment === "at_risk") && (
+
+                      <Link
+                        href={`/campaigns?segment=${
+                          activeSegment === "repeat"
+                            ? "returning"
+                            : activeSegment
+                        }`}
+                        className="flex items-center justify-center rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
+                      >
+                        Create Campaign →
+                      </Link>
+
+                    )}
+
+                  </div>
+
                 </div>
 
               </div>
-            </div>
 
-            {/* Total Customers */}
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5 lg:p-6 dark:border-slate-800 dark:bg-slate-900">
-              <div className="flex items-center justify-between gap-3">
+              {/* EMPTY STATE */}
 
-                <div className="min-w-0">
-                  <div className="text-xs text-slate-500 sm:text-sm dark:text-slate-400">
-                    {t("totalCustomers")}
+              {active.customers.length === 0 ? (
+
+                <div className="p-8 text-center sm:p-12">
+
+                  <div className="text-4xl">
+                    🎯
                   </div>
 
-                  <div className="mt-1 text-2xl font-bold text-purple-600 sm:mt-2 sm:text-3xl dark:text-purple-400">
-                    {totalCustomers}
-                  </div>
+                  <h4 className="mt-4 text-base font-semibold text-gray-900 dark:text-white">
+                    No customers in this segment
+                  </h4>
+
+                  <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-gray-500 dark:text-gray-400">
+                    This audience will update
+                    automatically as customer
+                    behavior changes.
+                  </p>
+
                 </div>
 
-                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-purple-50 text-purple-600 sm:h-14 sm:w-14 sm:rounded-2xl dark:bg-purple-950/40 dark:text-purple-400">
-                  <svg
-                    className="h-6 w-6 sm:h-7 sm:w-7"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.8"
-                  >
-                    <circle cx="9" cy="8" r="3" />
-                    <circle cx="17" cy="9" r="2.5" />
-                    <path d="M3.5 19c.7-3 2.5-4.5 5.5-4.5S13.8 16 14.5 19" />
-                    <path d="M14 15.5c2.8-.2 5.2.9 6 3.5" />
-                  </svg>
-                </div>
+              ) : (
 
-              </div>
-            </div>
+                <>
 
-            {/* Total Orders */}
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5 lg:p-6 dark:border-slate-800 dark:bg-slate-900">
-              <div className="flex items-center justify-between gap-3">
+                  {/* MOBILE CUSTOMER CARDS */}
 
-                <div className="min-w-0">
-                  <div className="text-xs text-slate-500 sm:text-sm dark:text-slate-400">
-                    {t("totalOrders")}
-                  </div>
+                  <div className="divide-y divide-gray-200 dark:divide-slate-800 md:hidden">
 
-                  <div className="mt-1 text-2xl font-bold text-blue-600 sm:mt-2 sm:text-3xl dark:text-blue-400">
-                    {totalOrders}
-                  </div>
-                </div>
+                    {sortedCustomers.map(
+                      (customer) => (
 
-                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600 sm:h-14 sm:w-14 sm:rounded-2xl dark:bg-blue-950/40 dark:text-blue-400">
-                  <svg
-                    className="h-6 w-6 sm:h-7 sm:w-7"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.8"
-                  >
-                    <path d="M6 3h12l2 4v14H4V7l2-4Z" />
-                    <path d="M4 7h16M9 11h6M9 15h6" />
-                  </svg>
-                </div>
+                        <div
+                          key={customer.id}
+                          className="p-4"
+                        >
 
-              </div>
-            </div>
+                          <div className="flex items-start justify-between gap-3">
 
-            {/* Revenue */}
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5 lg:p-6 dark:border-slate-800 dark:bg-slate-900">
-              <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0 flex-1">
 
-                <div className="min-w-0 flex-1">
-                  <div className="text-xs text-slate-500 sm:text-sm dark:text-slate-400">
-                    {t("totalRevenue")}
-                  </div>
+                              <Link
+                                href={`/customers/${customer.id}`}
+                                className="block truncate text-base font-semibold text-gray-900 hover:text-blue-600 dark:text-white"
+                              >
+                                {customer.name}
+                              </Link>
 
-                  <div className="mt-2 space-y-2 sm:mt-3">
-                    {Object.entries(
-                      revenueByCurrency
-                    ).length === 0 ? (
-                      <div className="text-sm text-slate-400">
-                        {t("noData")}
-                      </div>
-                    ) : (
-                      Object.entries(
-                        revenueByCurrency
-                      ).map(
-                        ([currencyCode, amount]) => (
-                          <div
-                            key={currencyCode}
-                            className="flex flex-wrap items-baseline gap-x-2 gap-y-1"
-                          >
-                            <span className="text-xs font-semibold text-slate-500 sm:text-sm dark:text-slate-400">
-                              {currencyCode}
-                            </span>
+                              <p className="mt-1 truncate text-xs text-gray-500 dark:text-gray-400">
+                                {customer.email ||
+                                  "No email"}
+                              </p>
 
-                            <span className="text-lg font-bold text-emerald-600 sm:text-xl dark:text-emerald-400">
-                              {Number(
-                                amount
-                              ).toLocaleString(
-                                language === "ar"
-                                  ? "ar-EG"
-                                  : "en-US",
-                                {
-                                  minimumFractionDigits: 2,
-                                  maximumFractionDigits: 2,
-                                }
-                              )}
-                            </span>
+                            </div>
+
+                            {customer.whatsappReady ? (
+
+                              <span className="shrink-0 rounded-full bg-green-100 px-2.5 py-1 text-[10px] font-semibold text-green-700">
+                                WhatsApp
+                              </span>
+
+                            ) : (
+
+                              <span className="shrink-0 rounded-full bg-gray-100 px-2.5 py-1 text-[10px] font-semibold text-gray-500 dark:bg-slate-800 dark:text-gray-400">
+                                No Phone
+                              </span>
+
+                            )}
+
                           </div>
-                        )
+
+                          <div className="mt-4 grid grid-cols-2 gap-3">
+
+                            <div className="rounded-xl bg-gray-50 p-3 dark:bg-slate-800">
+
+                              <p className="text-[10px] font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                                Orders
+                              </p>
+
+                              <p className="mt-1 text-lg font-bold text-gray-900 dark:text-white">
+                                {customer.ordersCount}
+                              </p>
+
+                            </div>
+
+                            <div className="rounded-xl bg-gray-50 p-3 dark:bg-slate-800">
+
+                              <p className="text-[10px] font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                                Last Order
+                              </p>
+
+                              <p className="mt-1 truncate text-sm font-semibold text-gray-900 dark:text-white">
+                                {customer.lastOrderAt
+                                  ? new Date(
+                                      customer.lastOrderAt
+                                    ).toLocaleDateString()
+                                  : "No orders"}
+                              </p>
+
+                            </div>
+
+                          </div>
+
+                          <div className="mt-3 rounded-xl border border-gray-100 p-3 dark:border-slate-800">
+
+                            <p className="text-[10px] font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                              Revenue
+                            </p>
+
+                            {Object.keys(
+                              customer.revenueByCurrency
+                            ).length === 0 ? (
+
+                              <p className="mt-1 text-sm text-gray-400">
+                                No revenue
+                              </p>
+
+                            ) : (
+
+                              <div className="mt-2 flex flex-wrap gap-2">
+
+                                {Object.entries(
+                                  customer.revenueByCurrency
+                                ).map(
+                                  ([currency, amount]) => (
+
+                                    <span
+                                      key={currency}
+                                      className="rounded-lg bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-400"
+                                    >
+                                      {formatMoney(
+                                        amount,
+                                        currency
+                                      )}
+                                    </span>
+
+                                  )
+                                )}
+
+                              </div>
+
+                            )}
+
+                          </div>
+
+                        </div>
+
                       )
                     )}
+
                   </div>
-                </div>
 
-                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600 sm:h-14 sm:w-14 sm:rounded-2xl dark:bg-emerald-950/40 dark:text-emerald-400">
-                  <svg
-                    className="h-6 w-6 sm:h-7 sm:w-7"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.8"
-                  >
-                    <circle cx="12" cy="12" r="8" />
-                    <path d="M12 7v10M15 9.5c-.6-.8-1.5-1.2-2.7-1.2-1.5 0-2.5.7-2.5 1.8 0 2.8 5.5 1.2 5.5 4.1 0 1.1-1 1.9-2.6 1.9-1.2 0-2.2-.4-2.9-1.2" />
-                  </svg>
-                </div>
+                  {/* DESKTOP TABLE */}
 
-              </div>
+                  <div className="hidden overflow-x-auto md:block">
+
+                    <table className="w-full min-w-[760px] text-left">
+
+                      <thead className="border-b border-gray-200 bg-gray-50 text-xs uppercase tracking-wide text-gray-500 dark:border-slate-800 dark:bg-slate-800/50 dark:text-gray-400">
+
+                        <tr>
+
+                          <th className="px-6 py-4">
+                            Customer
+                          </th>
+
+                          <th className="px-6 py-4">
+                            Orders
+                          </th>
+
+                          <th className="px-6 py-4">
+                            Revenue
+                          </th>
+
+                          <th className="px-6 py-4">
+                            Last Order
+                          </th>
+
+                          <th className="px-6 py-4">
+                            Contact
+                          </th>
+
+                        </tr>
+
+                      </thead>
+
+                      <tbody>
+
+                        {sortedCustomers.map(
+                          (customer) => (
+
+                            <tr
+                              key={customer.id}
+                              className="border-b border-gray-100 transition hover:bg-gray-50 last:border-0 dark:border-slate-800 dark:hover:bg-slate-800/50"
+                            >
+
+                              <td className="px-6 py-5">
+
+                                <Link
+                                  href={`/customers/${customer.id}`}
+                                  className="font-semibold text-gray-900 hover:text-blue-600 dark:text-white"
+                                >
+                                  {customer.name}
+                                </Link>
+
+                                <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
+                                  {customer.email ||
+                                    "No email"}
+                                </p>
+
+                              </td>
+
+                              <td className="px-6 py-5 font-semibold text-gray-900 dark:text-white">
+                                {customer.ordersCount}
+                              </td>
+
+                              <td className="px-6 py-5">
+
+                                {Object.keys(
+                                  customer.revenueByCurrency
+                                ).length === 0 ? (
+
+                                  <span className="text-sm text-gray-400">
+                                    No revenue
+                                  </span>
+
+                                ) : (
+
+                                  <div className="space-y-1">
+
+                                    {Object.entries(
+                                      customer.revenueByCurrency
+                                    ).map(
+                                      ([currency, amount]) => (
+
+                                        <div
+                                          key={currency}
+                                          className="font-semibold text-emerald-600 dark:text-emerald-400"
+                                        >
+                                          {formatMoney(
+                                            amount,
+                                            currency
+                                          )}
+                                        </div>
+
+                                      )
+                                    )}
+
+                                  </div>
+
+                                )}
+
+                              </td>
+
+                              <td className="px-6 py-5 text-sm text-gray-600 dark:text-gray-300">
+
+                                {customer.lastOrderAt
+                                  ? new Date(
+                                      customer.lastOrderAt
+                                    ).toLocaleDateString()
+                                  : "No orders"}
+
+                              </td>
+
+                              <td className="px-6 py-5">
+
+                                {customer.whatsappReady ? (
+
+                                  <span className="whitespace-nowrap rounded-full bg-green-100 px-3 py-1.5 text-xs font-semibold text-green-700 dark:bg-green-950/40 dark:text-green-400">
+                                    WhatsApp Ready
+                                  </span>
+
+                                ) : (
+
+                                  <span className="whitespace-nowrap rounded-full bg-gray-100 px-3 py-1.5 text-xs font-semibold text-gray-500 dark:bg-slate-800 dark:text-gray-400">
+                                    No Phone
+                                  </span>
+
+                                )}
+
+                              </td>
+
+                            </tr>
+
+                          )
+                        )}
+
+                      </tbody>
+
+                    </table>
+
+                  </div>
+
+                </>
+
+              )}
+
             </div>
 
-          </div>
+            {/* SUMMARY */}
 
-          {/* Tables */}
-          <div className="grid grid-cols-1 gap-5 lg:grid-cols-2 lg:gap-6">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3">
 
-            {/* Top Customers */}
-            <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+              <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-5">
 
-              <div className="border-b border-slate-200 p-4 sm:p-6 dark:border-slate-800">
-                <h3 className="text-lg font-bold text-slate-900 sm:text-xl dark:text-white">
-                  {t("topCustomers")}
-                </h3>
-
-                <p className="mt-1 text-xs text-slate-500 sm:text-sm dark:text-slate-400">
-                  {t("highestSpending")}
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  Total Customers
                 </p>
+
+                <p className="mt-2 text-3xl font-bold text-gray-900 dark:text-white">
+                  {customerProfiles.length}
+                </p>
+
+                <p className="mt-1 text-xs leading-5 text-gray-400 dark:text-gray-500">
+                  Customer records in this restaurant
+                </p>
+
               </div>
 
-              {topCustomers.length === 0 ? (
-                <div className="p-4 text-sm text-slate-500 sm:p-6 dark:text-slate-400">
-                  {t("noData")}
-                </div>
-              ) : (
-                <div className="divide-y divide-slate-200 dark:divide-slate-800">
+              <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-5">
 
-                  {topCustomers.map(
-                    (customer, index) => (
-                      <div
-                        key={customer.id}
-                        className="flex items-center justify-between gap-3 p-4 sm:gap-4 sm:p-6"
-                      >
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  Revenue Currencies
+                </p>
 
-                        <div className="flex min-w-0 items-center gap-3 sm:gap-4">
+                <div className="mt-3 flex flex-wrap gap-2">
 
-                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-blue-50 text-sm font-semibold text-blue-600 sm:h-10 sm:w-10 dark:bg-blue-950/40 dark:text-blue-300">
-                            {index + 1}
-                          </div>
-
-                          <div className="min-w-0">
-                            <div className="truncate text-sm font-semibold text-slate-900 sm:text-base dark:text-white">
-                              {customer.name}
-                            </div>
-
-                            <div className="mt-1 text-xs text-slate-500 sm:text-sm dark:text-slate-400">
-                              {customer.total_orders || 0}{" "}
-                              {t("orders")}
-                            </div>
-                          </div>
-
-                        </div>
-
-                        <div className="shrink-0 text-right">
-
-                          {Object.entries(
-                            customerRevenue[
-                              customer.id
-                            ] || {}
-                          ).map(
-                            (
-                              [
-                                currencyCode,
-                                amount,
-                              ]
-                            ) => (
-                              <div
-                                key={currencyCode}
-                                className="whitespace-nowrap text-sm font-bold text-emerald-600 sm:text-base dark:text-emerald-400"
-                              >
-                                {Number(
-                                  amount
-                                ).toLocaleString(
-                                  language === "ar"
-                                    ? "ar-EG"
-                                    : "en-US",
-                                  {
-                                    minimumFractionDigits: 2,
-                                    maximumFractionDigits: 2,
-                                  }
-                                )}{" "}
-
-                                <span className="text-[10px] font-semibold text-slate-400 sm:text-xs">
-                                  {currencyCode}
-                                </span>
-                              </div>
-                            )
-                          )}
-
-                        </div>
-
-                      </div>
+                  {Array.from(
+                    new Set(
+                      orders.map(
+                        (order) =>
+                          order.currency_code ||
+                          "EGP"
+                      )
                     )
+                  ).length === 0 ? (
+
+                    <span className="text-sm text-gray-400">
+                      No orders yet
+                    </span>
+
+                  ) : (
+
+                    Array.from(
+                      new Set(
+                        orders.map(
+                          (order) =>
+                            order.currency_code ||
+                            "EGP"
+                        )
+                      )
+                    ).map((currency) => (
+
+                      <span
+                        key={currency}
+                        className="rounded-full bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 dark:bg-blue-950/40 dark:text-blue-400"
+                      >
+                        {currency}
+                      </span>
+
+                    ))
+
                   )}
 
                 </div>
-              )}
 
-            </section>
-
-            {/* Recent Orders */}
-            <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
-
-              <div className="border-b border-slate-200 p-4 sm:p-6 dark:border-slate-800">
-                <h3 className="text-lg font-bold text-slate-900 sm:text-xl dark:text-white">
-                  {t("recentOrders")}
-                </h3>
-
-                <p className="mt-1 text-xs text-slate-500 sm:text-sm dark:text-slate-400">
-                  {t("latestOrders")}
-                </p>
               </div>
 
-              {orders.length === 0 ? (
-                <div className="p-4 text-sm text-slate-500 sm:p-6 dark:text-slate-400">
-                  {t("noData")}
-                </div>
-              ) : (
-                <div className="divide-y divide-slate-200 dark:divide-slate-800">
+              <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900 sm:p-5">
 
-                  {orders.map((order) => (
-                    <div
-                      key={order.id}
-                      className="flex items-center justify-between gap-3 p-4 sm:gap-4 sm:p-6"
-                    >
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  Actionable Segments
+                </p>
 
-                      <div className="min-w-0">
-                        <div className="truncate text-sm font-semibold text-slate-900 sm:text-base dark:text-white">
-                          {order.order_number}
-                        </div>
+                <p className="mt-2 text-3xl font-bold text-blue-600 dark:text-blue-400">
+                  7
+                </p>
 
-                        <div className="mt-1 truncate text-xs text-slate-500 sm:text-sm dark:text-slate-400">
-                          {order.customers?.name ||
-                            t("customer")}
-                        </div>
-                      </div>
+                <p className="mt-1 text-xs leading-5 text-gray-400 dark:text-gray-500">
+                  Behavior-based audiences ready for
+                  campaigns
+                </p>
 
-                      <div className="shrink-0 text-right">
+              </div>
 
-                        <div className="whitespace-nowrap text-sm font-bold text-slate-900 sm:text-base dark:text-white">
-                          {Number(
-                            order.total || 0
-                          ).toLocaleString(
-                            language === "ar"
-                              ? "ar-EG"
-                              : "en-US",
-                            {
-                              minimumFractionDigits: 2,
-                              maximumFractionDigits: 2,
-                            }
-                          )}{" "}
+            </div>
 
-                          <span className="text-[10px] font-semibold text-slate-400 sm:text-xs">
-                            {order.currency_code ||
-                              restaurantCurrency}
-                          </span>
-                        </div>
+          </>
+        )}
 
-                        <div className="mt-1 text-xs text-slate-500 sm:text-sm dark:text-slate-400">
-                          {translateStatus(
-                            order.status
-                          )}
-                        </div>
-
-                      </div>
-
-                    </div>
-                  ))}
-
-                </div>
-              )}
-
-            </section>
-
-          </div>
-
-        </div>
-      )}
+      </div>
     </AppShell>
   );
 }
