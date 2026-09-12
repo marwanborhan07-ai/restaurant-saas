@@ -19,7 +19,10 @@ html.dark {
 
 html,
 body {
+  width: 100%;
   min-height: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
 }
 
 body {
@@ -44,6 +47,13 @@ select {
   font: inherit;
 }
 
+img,
+svg,
+video,
+canvas {
+  max-width: 100%;
+}
+
 ::selection {
   background: #2563eb;
   color: white;
@@ -54,7 +64,7 @@ html.dark ::selection {
   color: white;
 }
 
-/* Smooth scrollbar colors */
+/* Scrollbar */
 html {
   scrollbar-width: thin;
 }
@@ -65,4 +75,28 @@ html.dark {
 
 html:not(.dark) {
   scrollbar-color: #cbd5e1 #f8fafc;
+}
+
+/* =========================
+   MOBILE RESPONSIVE FIXES
+========================= */
+
+@media (max-width: 767px) {
+  body {
+    width: 100%;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  input,
+  select,
+  textarea,
+  button {
+    max-width: 100%;
+  }
+
+  /* Better touch behavior */
+  button,
+  a {
+    -webkit-tap-highlight-color: transparent;
+  }
 }

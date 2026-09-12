@@ -1,10 +1,15 @@
-﻿"use client";
+"use client";
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useLanguage } from "./language-context";
 import { TrialStatusCard } from "./trial-status-card";
 import { createClient } from "@/lib/supabase/client";
+
+type SidebarProps = {
+  mobileOpen?: boolean;
+  onClose?: () => void;
+};
 
 function Icon({
   type,
@@ -135,7 +140,10 @@ const navItems = [
   { href: "/billing", key: "billingTitle", icon: "billing" },
 ];
 
-export function Sidebar() {
+export function Sidebar({
+  mobileOpen = false,
+  onClose,
+}: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
   const { language, t } = useLanguage();
@@ -147,6 +155,8 @@ export function Sidebar() {
 
     await supabase.auth.signOut();
 
+    onClose?.();
+
     router.replace("/login");
     router.refresh();
   }
@@ -154,10 +164,22 @@ export function Sidebar() {
   return (
     <aside
       dir={isArabic ? "rtl" : "ltr"}
-      className="sticky top-0 flex h-screen w-64 shrink-0 flex-col border-r border-slate-200 bg-white px-4 py-6 transition-colors dark:border-slate-800 dark:bg-slate-900"
+      className={`
+        fixed inset-y-0 left-0 z-50 flex h-[100dvh] w-[280px]
+        flex-col border-r border-slate-200 bg-white px-4 py-6
+        shadow-2xl transition-transform duration-300
+        dark:border-slate-800 dark:bg-slate-900
+        ${
+          mobileOpen
+            ? "translate-x-0"
+            : "-translate-x-full"
+        }
+        md:sticky md:top-0 md:z-auto md:h-screen md:w-64
+        md:translate-x-0 md:shadow-none
+      `}
     >
       <div
-        className={`shrink-0 px-3 ${
+        className={`flex shrink-0 items-center justify-between px-3 ${
           isArabic ? "text-right" : "text-left"
         }`}
       >
@@ -167,6 +189,15 @@ export function Sidebar() {
             Growth OS
           </span>
         </div>
+
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-lg p-2 text-slate-500 transition hover:bg-slate-100 dark:hover:bg-slate-800 md:hidden"
+          aria-label="Close menu"
+        >
+          ✕
+        </button>
       </div>
 
       <nav className="mt-8 min-h-0 flex-1 space-y-1.5 overflow-y-auto pr-1">
@@ -179,6 +210,7 @@ export function Sidebar() {
             <Link
               key={item.href}
               href={item.href}
+              onClick={onClose}
               className={`flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium transition ${
                 active
                   ? "bg-blue-50 text-blue-600 dark:bg-blue-950/50 dark:text-blue-300"
@@ -193,16 +225,17 @@ export function Sidebar() {
             </Link>
           );
         })}
-      
-            <Link
-              href="/account"
-              className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-slate-600 transition hover:bg-slate-50 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800"
-            >
-              <span>👤</span>
-              <span>Account</span>
-            </Link>
 
-</nav>
+        <Link
+          href="/account"
+          onClick={onClose}
+          className="flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium text-slate-700 transition hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800"
+        >
+          <span className="shrink-0">👤</span>
+
+          <span>{isArabic ? "الحساب" : "Account"}</span>
+        </Link>
+      </nav>
 
       <div className="shrink-0 pt-4">
         <TrialStatusCard />
@@ -217,11 +250,10 @@ export function Sidebar() {
           </span>
 
           <span>
-            {isArabic ? "\u062a\u0633\u062c\u064a\u0644 \u0627\u0644\u062e\u0631\u0648\u062c" : "Log out"}
+            {isArabic ? "تسجيل الخروج" : "Log out"}
           </span>
         </button>
       </div>
     </aside>
   );
 }
-
